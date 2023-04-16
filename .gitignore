@@ -15,7 +15,7 @@ Makefile
 compile_commands.json
 # Temporary files left by editors etc.
 *.swp
-
+.cache/
 # Other stuff
 output.png
 
