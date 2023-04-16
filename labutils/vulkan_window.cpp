@@ -12,6 +12,7 @@
 #include <cassert>
 #include <vulkan/vulkan_core.h>
 
+#include "GLFW/glfw3.h"
 #include "error.hpp"
 #include "to_string.hpp"
 #include "context_helpers.hxx"
@@ -92,6 +93,8 @@ namespace labutils
 		, swapViews( std::move( aOther.swapViews ) )
 		, swapchainFormat( aOther.swapchainFormat )
 		, swapchainExtent( aOther.swapchainExtent )
+		, maxAnisotropy(aOther.maxAnisotropy)
+		, currentDeviceFeatures(std::move(aOther.currentDeviceFeatures))
 	{}
 
 	VulkanWindow& VulkanWindow::operator=( VulkanWindow&& aOther ) noexcept
@@ -106,6 +109,8 @@ namespace labutils
 		std::swap( swapViews, aOther.swapViews );
 		std::swap( swapchainFormat, aOther.swapchainFormat );
 		std::swap( swapchainExtent, aOther.swapchainExtent );
+		std::swap( maxAnisotropy, aOther.maxAnisotropy);
+		std::swap( currentDeviceFeatures, aOther.currentDeviceFeatures);
 		return *this;
 	}
 
@@ -122,7 +127,16 @@ namespace labutils
 			);
 		}
 
-		//TODO: initialize GLFW
+		// initialize GLFW
+		if (GLFW_TRUE != glfwInit()) {
+			const char *errMsg = nullptr;
+			glfwGetError(&errMsg);
+			throw lut::Error("GLFW initialization failed: %s", errMsg);
+		}
+		// check if glfw support vulkan or not
+		if(!glfwVulkanSupported()) {
+			throw lut::Error("GLFW: Vulkan not supported.");
+		}
 
 		// Check for instance layers and extensions
 		auto const supportedLayers = detail::get_instance_layers();
@@ -132,8 +146,16 @@ namespace labutils
 
 		std::vector<char const*> enabledLayers, enabledExensions;
 
-		//TODO: check that the instance extensions required by GLFW are available,
-		//TODO: and if so, request these to be enabled in the instance creation.
+		// check that the instance extensions required by GLFW are available,
+		// and if so, request these to be enabled in the instance creation.
+		std::uint32_t reqExtCount = 0;
+		const char **reqExtensions = glfwGetRequiredInstanceExtensions(&reqExtCount);
+		for (std::uint32_t i = 0; i < reqExtCount; i ++) {
+			if (!supportedExtensions.count(reqExtensions[i])) {
+				throw lut::Error("GLFW/Vulkan: required instance extension %s not supported", reqExtensions[i]);
+			}
+			enabledExensions.emplace_back(reqExtensions[i]);
+		}
 
 		// Validation layers support.
 #		if !defined(NDEBUG) // debug builds only
@@ -165,8 +187,22 @@ namespace labutils
 		if( enableDebugUtils )
 			ret.debugMessenger = detail::create_debug_messenger( ret.instance );
 
-		//TODO: create GLFW window
-		//TODO: get VkSurfaceKHR from the window
+		// create GLFW window
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+		ret.window = glfwCreateWindow(1600, 900, "My window", nullptr, nullptr);
+		if (!ret.window) {
+			const char *errMsg = nullptr;
+			glfwGetError(&errMsg);
+
+			throw lut::Error("Unable to create GLFW window\n"
+							"Last error = %s", errMsg);
+		}
+		//: get VkSurfaceKHR from the window
+		if (auto const res = glfwCreateWindowSurface(ret.instance, ret.window, nullptr, &ret.surface)) {
+			throw lut::Error("Unable to create VkSurfaceKHR\n"
+							"glfwCreateWindowSurface() returned %s", lut::to_string(res).c_str());
+		}
 
 		// Select appropriate Vulkan device
 		ret.physicalDevice = select_device( ret.instance, ret.surface );
@@ -185,7 +221,8 @@ namespace labutils
 		// request it without further checks.
 		std::vector<char const*> enabledDevExensions;
 
-		//TODO: list necessary extensions here
+		// list necessary extensions here
+		enabledDevExensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
 		for( auto const& ext : enabledDevExensions )
 			std::fprintf( stderr, "Enabling device extension: %s\n", ext );
@@ -195,8 +232,26 @@ namespace labutils
 		// - otherwise: one GRAPHICS queue and any queue that can present
 		std::vector<std::uint32_t> queueFamilyIndices;
 
-		//TODO: logic to select necessary queue families to instantiate
+		// logic to select necessary queue families to instantiate
+		if (auto const index = find_queue_family(ret.physicalDevice, VK_QUEUE_GRAPHICS_BIT, ret.surface)) {
+			ret.graphicsFamilyIndex = *index;
+			queueFamilyIndices.emplace_back(*index);
+		} else {
+			auto graphics = find_queue_family(ret.physicalDevice, VK_QUEUE_GRAPHICS_BIT);
+			auto present = find_queue_family(ret.physicalDevice, 0, ret.surface);
 
+			if (!(graphics && present)) {
+				throw lut::Error("Vulkan: can't find suitable suitable families for graphics and present");
+			}
+			ret.graphicsFamilyIndex = *graphics;
+			ret.presentFamilyIndex = *present;
+
+			queueFamilyIndices.emplace_back(*graphics);
+			queueFamilyIndices.emplace_back(*present);
+		}
+
+		// update features
+		vkGetPhysicalDeviceFeatures(ret.physicalDevice, &ret.currentDeviceFeatures);
 		ret.device = create_device( ret.physicalDevice, queueFamilyIndices, enabledDevExensions );
 
 		// Retrieve VkQueues
@@ -219,14 +274,62 @@ namespace labutils
 		get_swapchain_images( ret.device, ret.swapchain, ret.swapImages );
 		create_swapchain_image_views( ret.device, ret.swapchainFormat, ret.swapImages, ret.swapViews );
 
+		VkPhysicalDeviceProperties props;
+		vkGetPhysicalDeviceProperties( ret.physicalDevice, &props );
+		ret.maxAnisotropy = props.limits.maxSamplerAnisotropy;
+
 		// Done
 		return ret;
 	}
 
 	SwapChanges recreate_swapchain( VulkanWindow& aWindow )
 	{
-		//TODO: implement me!
-		throw lut::Error( "Not yet implemented!" );
+		// Remember old format & extents
+		auto const oldFormat = aWindow.swapchainFormat;
+		auto const oldExtent = aWindow.swapchainExtent; 
+
+		// Destroy old objects (except for the old swap chain)
+		VkSwapchainKHR oldSwapchain = aWindow.swapchain;
+
+		for( auto view : aWindow.swapViews ) 
+			vkDestroyImageView(aWindow.device, view, nullptr);
+
+		aWindow.swapViews.clear();
+		aWindow.swapImages.clear();
+
+		// create swap chain
+		std::vector<std::uint32_t> queueFamilyIndices;
+		if (aWindow.presentFamilyIndex != aWindow.graphicsFamilyIndex) {
+			queueFamilyIndices.emplace_back(aWindow.graphicsFamilyIndex);
+			queueFamilyIndices.emplace_back(aWindow.presentFamilyIndex);
+		}
+
+		try {
+			std::tie(aWindow.swapchain, aWindow.swapchainFormat, aWindow.swapchainExtent) =
+			create_swapchain(aWindow.physicalDevice, aWindow.surface, aWindow.device, aWindow.window, queueFamilyIndices, oldSwapchain);
+		}
+		catch(...) {
+			// ensure oldchain is destoried when error happens here
+			aWindow.swapchain = oldSwapchain;
+			throw;
+		}
+
+		// Destory old chain
+		vkDestroySwapchainKHR( aWindow.device, oldSwapchain, nullptr );
+
+		// Get new swap chain images & create associated image views
+		get_swapchain_images(aWindow.device, aWindow.swapchain, aWindow.swapImages);
+		create_swapchain_image_views( aWindow.device, aWindow.swapchainFormat, aWindow.swapImages, aWindow.swapViews );
+
+		// Determine which swap chain properties have changed and return the information indicating this
+		SwapChanges ret{};
+		if( oldExtent.width != aWindow.swapchainExtent.width || oldExtent.height != aWindow.swapchainExtent.height ) {
+			ret.changedSize = true;
+		}
+		if( oldFormat != aWindow.swapchainFormat ) {
+			ret.changedFormat = true;
+		}
+		return ret;
 	}
 }
 
@@ -234,14 +337,42 @@ namespace
 {
 	std::vector<VkSurfaceFormatKHR> get_surface_formats( VkPhysicalDevice aPhysicalDev, VkSurfaceKHR aSurface )
 	{
-		//TODO: implement me!
-		throw lut::Error( "Not yet implemented!" );
+		std::uint32_t fmt_cnt;
+		if (auto const res = vkGetPhysicalDeviceSurfaceFormatsKHR(aPhysicalDev, aSurface, &fmt_cnt, nullptr);
+		VK_SUCCESS != res) {
+			throw lut::Error("Error: unable to enumerate surface formats\n"
+							"vkGetPhysicalDeviceSurfaceFormatsKHR() return %s", lut::to_string(res).c_str());
+		}
+		std::vector<VkSurfaceFormatKHR> formats(fmt_cnt);
+
+		if (auto const res = vkGetPhysicalDeviceSurfaceFormatsKHR(aPhysicalDev, aSurface, &fmt_cnt, formats.data());
+		VK_SUCCESS != res || formats.empty()) {
+			throw lut::Error("Error: unable to get surface formats\n"
+							"vkGetPhysicalDeviceSurfaceFormatsKHR() return %s", lut::to_string(res).c_str());
+		}
+		return formats;
 	}
 
 	std::unordered_set<VkPresentModeKHR> get_present_modes( VkPhysicalDevice aPhysicalDev, VkSurfaceKHR aSurface )
 	{
-		//TODO: implement me!
-		throw lut::Error( "Not yet implemented!" );
+		std::uint32_t mode_cnt;
+		if (auto const res = vkGetPhysicalDeviceSurfacePresentModesKHR(aPhysicalDev, aSurface, &mode_cnt, nullptr);
+		VK_SUCCESS != res) {
+			throw lut::Error("Error: unable to enumerate surface present modes\n"
+							"vkGetPhysicalDeviceSurfacePresentModesKHR() return %s", lut::to_string(res).c_str());
+		}
+		std::vector<VkPresentModeKHR> modes(mode_cnt);
+
+		if (auto const res = vkGetPhysicalDeviceSurfacePresentModesKHR(aPhysicalDev, aSurface, &mode_cnt, modes.data());
+		VK_SUCCESS != res || modes.empty()) {
+			throw lut::Error("Error: unable to get surface present modes\n"
+							"vkGetPhysicalDeviceSurfacePresentModesKHR() return %s", lut::to_string(res).c_str());
+		}
+		std::unordered_set<VkPresentModeKHR> res;
+		for (auto &mod : modes) {
+			res.insert(mod);
+		}
+		return res;
 	}
 
 	std::tuple<VkSwapchainKHR,VkFormat,VkExtent2D> create_swapchain( VkPhysicalDevice aPhysicalDev, VkSurfaceKHR aSurface, VkDevice aDevice, GLFWwindow* aWindow, std::vector<std::uint32_t> const& aQueueFamilyIndices, VkSwapchainKHR aOldSwapchain )
@@ -249,38 +380,138 @@ namespace
 		auto const formats = get_surface_formats( aPhysicalDev, aSurface );
 		auto const modes = get_present_modes( aPhysicalDev, aSurface );
 
-		//TODO: pick appropriate VkSurfaceFormatKHR format.
-		VkSurfaceFormatKHR format{}; // FIXME!
+		// pick appropriate VkSurfaceFormatKHR format.
+		VkSurfaceFormatKHR format = formats[0];
+		for (auto const fmt : formats) {
+			if( VK_FORMAT_R8G8B8A8_SRGB == fmt.format && 
+			VK_COLOR_SPACE_SRGB_NONLINEAR_KHR == fmt.colorSpace ) {
+				format = fmt; 
+				break;
+			}
+			if( VK_FORMAT_B8G8R8A8_SRGB == fmt.format && 
+			VK_COLOR_SPACE_SRGB_NONLINEAR_KHR == fmt.colorSpace ) {
+				format = fmt; 
+				break;
+			}
+		}
 
-		//TODO: pick appropriate VkPresentModeKHR
-		VkPresentModeKHR presentMode{}; // FIXME
+		// pick appropriate VkPresentModeKHR
+		VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+		if (modes.count(VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+			presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+		}
 
-		//TODO: pick image count
-		std::uint32_t imageCount{}; // FIXME
+		//pick image count
+		// find support image count of the surface
+		VkSurfaceCapabilitiesKHR caps;
+		if (auto const res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(aPhysicalDev, aSurface, &caps);
+			VK_SUCCESS != res) {
+				throw lut::Error( "Unable to get surface capabilities\n"
+					"vkGetPhysicalDeviceSurfaceCapabilitiesKHR() returned %s", lut::to_string(res).c_str());
+			}
+		std::uint32_t imageCount = 2;
 
-		//TODO: figure out swap extent
-		VkExtent2D extent{}; // FIXME
+		if (imageCount < caps.minImageCount) {
+			imageCount = caps.minImageCount + 1;
+		}
+		if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount) {
+			imageCount = caps.maxImageCount;
+		}
+		printf("[Message] Format of images in swap chain : %d \n", format.format);
+		printf("[Message] Number of images in swap chain : %d \n", imageCount);
+		printf("[Message] Min image count is %d, max is %d \n", caps.minImageCount, caps.maxImageCount);
 
-		// TODO: create swap chain
-		throw lut::Error( "Not yet implemented!" );
+		// figure out swap extent
+		VkExtent2D extent = caps.currentExtent;
+		if (std::numeric_limits<std::uint32_t>::max() == extent.height) {
+			int width, height;
+			glfwGetFramebufferSize(aWindow, &width, &height);
+			auto const &min = caps.minImageExtent;
+			auto const &max = caps.maxImageExtent;
+
+			extent.width = std::clamp( std::uint32_t(width), min.width, max.width ); 
+			extent.height = std::clamp( std::uint32_t(height), min.height, max.height ); 
+		}
+
+		// create a new swap chain
+		VkSwapchainCreateInfoKHR chainInfo{}; 
+		chainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; 
+		chainInfo.surface = aSurface;
+		chainInfo.minImageCount = imageCount;
+		chainInfo.imageFormat = format.format;
+		chainInfo.imageColorSpace = format.colorSpace;
+		chainInfo.imageExtent = extent; 
+		chainInfo.imageArrayLayers = 1;
+		chainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		chainInfo.preTransform = caps.currentTransform; 
+		chainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		chainInfo.presentMode = presentMode;
+		chainInfo.clipped = VK_TRUE; 
+		chainInfo.oldSwapchain = aOldSwapchain;
+
+		if (aQueueFamilyIndices.size() <= 1) {
+			chainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		} else {
+			// Multiple queues may access this resource.
+			chainInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+			chainInfo.queueFamilyIndexCount = std::uint32_t(aQueueFamilyIndices.size());
+			chainInfo.pQueueFamilyIndices = aQueueFamilyIndices.data();
+		}
+
+		VkSwapchainKHR chain = VK_NULL_HANDLE; 
+		if (auto const res = vkCreateSwapchainKHR( aDevice, &chainInfo, nullptr, &chain );
+			VK_SUCCESS != res) {
+				throw lut::Error("Unable to create swap chain\n" 
+				"vkCreateSwapchainKHR() returned %s", lut::to_string(res).c_str());
+		}
+		return {chain, format.format, extent};
 	}
 
 
 	void get_swapchain_images( VkDevice aDevice, VkSwapchainKHR aSwapchain, std::vector<VkImage>& aImages )
 	{
-		assert( 0 == aImages.size() );
-
-		// TODO: get swapchain image handles with vkGetSwapchainImagesKHR
-		throw lut::Error( "Not yet implemented!" );
+		std::uint32_t count;
+		
+		if (auto const res = vkGetSwapchainImagesKHR(aDevice, aSwapchain, &count, nullptr);
+			VK_SUCCESS != res) {
+				throw lut::Error("Unable to access SwapchainImages\n" 
+				"vkGetSwapchainImagesKHR() returned %s", lut::to_string(res).c_str());
+		}
+		aImages.resize(count);
+		if (auto const res = vkGetSwapchainImagesKHR(aDevice, aSwapchain, &count, aImages.data());
+			VK_SUCCESS != res || aImages.empty()) {
+				throw lut::Error("Unable to get SwapchainImages\n" 
+				"vkGetSwapchainImagesKHR() returned %s", lut::to_string(res).c_str());
+		}
 	}
 
 	void create_swapchain_image_views( VkDevice aDevice, VkFormat aSwapchainFormat, std::vector<VkImage> const& aImages, std::vector<VkImageView>& aViews )
 	{
 		assert( 0 == aViews.size() );
-
-		// TODO: create a VkImageView for each of the VkImages.
-		throw lut::Error( "Not yet implemented!" );
-
+		for (std::uint32_t i = 0; i < aImages.size(); ++i) {
+			VkImageViewCreateInfo viewInfo{}; 
+			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			viewInfo.image = aImages[i]; 
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; 
+			viewInfo.format = aSwapchainFormat;
+			viewInfo.components = VkComponentMapping{
+				VK_COMPONENT_SWIZZLE_IDENTITY, // r
+				VK_COMPONENT_SWIZZLE_IDENTITY, // g
+				VK_COMPONENT_SWIZZLE_IDENTITY, // b
+				VK_COMPONENT_SWIZZLE_IDENTITY  // a
+			};
+			viewInfo.subresourceRange = VkImageSubresourceRange{
+				VK_IMAGE_ASPECT_COLOR_BIT,
+				0, 1, 0, 1
+			};
+			VkImageView view = VK_NULL_HANDLE;
+			if (auto const res = vkCreateImageView(aDevice, &viewInfo, nullptr, &view);
+				VK_SUCCESS != res) {
+					throw lut::Error( "Unable to create image view for swap chain image %zu\n"
+						"vkCreateImageView() returned %s", i, lut::to_string(res).c_str());
+			}
+			aViews.emplace_back(view);
+		}
 		assert( aViews.size() == aImages.size() );
 	}
 }
@@ -296,9 +527,30 @@ namespace
 	// GPUs), you would need to use different logic.
 	std::optional<std::uint32_t> find_queue_family( VkPhysicalDevice aPhysicalDev, VkQueueFlags aQueueFlags, VkSurfaceKHR aSurface )
 	{
-		//TODO: find queue family with the specified queue flags that can 
-		//TODO: present to the surface (if specified)
+		// find queue family with the specified queue flags that can 
+		// present to the surface (if specified)
+		std::uint32_t numQueues = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties( aPhysicalDev, &numQueues, nullptr);
 
+		std::vector<VkQueueFamilyProperties> families(numQueues);
+
+		vkGetPhysicalDeviceQueueFamilyProperties( aPhysicalDev, &numQueues, families.data());
+
+		for (std::uint32_t i = 0; i < numQueues; i ++) {
+			auto const &family = families[i];
+
+			if (aQueueFlags == (aQueueFlags & family.queueFlags)) {
+				if (VK_NULL_HANDLE == aSurface)
+					return i;
+				
+				VkBool32 supported = VK_FALSE;
+				
+				const auto res = vkGetPhysicalDeviceSurfaceSupportKHR(aPhysicalDev, i, aSurface, &supported);
+
+				if (VK_SUCCESS == res && supported) 
+					return i;
+			}
+		}
 		return {};
 	}
 
@@ -319,7 +571,12 @@ namespace
 			queueInfo.pQueuePriorities  = queuePriorities;
 		}
 
+		VkPhysicalDeviceFeatures supportFeatures;
+		vkGetPhysicalDeviceFeatures(aPhysicalDev, &supportFeatures);
+
 		VkPhysicalDeviceFeatures deviceFeatures{};
+		deviceFeatures.samplerAnisotropy = supportFeatures.samplerAnisotropy;
+		deviceFeatures.geometryShader = supportFeatures.geometryShader;
 		// No extra features for now.
 		
 		VkDeviceCreateInfo deviceInfo{};
@@ -362,13 +619,29 @@ namespace
 			return -1.f;
 		}
 
-		//TODO: additional checks
-		//TODO:  - check that the VK_KHR_swapchain extension is supported
-		//TODO:  - check that there is a queue family that can present to the
-		//TODO:    given surface
-		//TODO:  - check that there is a queue family that supports graphics
-		//TODO:    commands
+		// additional checks
+		//- check that the VK_KHR_swapchain extension is supported
+		auto const exts = lut::detail::get_device_extensions( aPhysicalDev );
+		if( !exts.count( VK_KHR_SWAPCHAIN_EXTENSION_NAME ) ) {
+			std::fprintf( stderr, "Info: Discarding device '%s': extension %s missing\n", 
+				props.deviceName, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+			return -1.f;
+		}
 
+		//- check that there is a queue family that can present to the
+		//  given surface
+		if (!find_queue_family(aPhysicalDev, 0, aSurface)) {
+			std::fprintf(stderr, "Info: Discarding device '%s': can't present to sufrace\n", props.deviceName);
+			return -1.f;
+		}
+
+		//- check that there is a queue family that supports graphics
+		//  commands
+		if (!find_queue_family(aPhysicalDev, VK_QUEUE_GRAPHICS_BIT)) {
+			std::fprintf(stderr, "Info: Discarding device: '%s': no grahpics queue family\n", props.deviceName);
+			return -1.f;
+		}
+		
 		// Discrete GPU > Integrated GPU > others
 		float score = 0.f;
 

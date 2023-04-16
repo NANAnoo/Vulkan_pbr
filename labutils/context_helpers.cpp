@@ -105,7 +105,6 @@ namespace labutils::detail
 				"vkCreateInstance() returned %s", lut::to_string(res).c_str() 
 			);
 		}
-
 		return instance;
 	}
 }

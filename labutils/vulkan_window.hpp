@@ -29,13 +29,16 @@ namespace labutils
 		public:
 			GLFWwindow* window = nullptr;
 			VkSurfaceKHR surface = VK_NULL_HANDLE;
-
+			
+			float maxAnisotropy = 0;
 			std::uint32_t presentFamilyIndex = 0;
 			VkQueue presentQueue = VK_NULL_HANDLE;
 
 			VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 			std::vector<VkImage> swapImages;
 			std::vector<VkImageView> swapViews;
+
+			VkPhysicalDeviceFeatures currentDeviceFeatures;
 
 			VkFormat swapchainFormat;
 			VkExtent2D swapchainExtent;

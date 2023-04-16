@@ -45,8 +45,27 @@ namespace labutils
 
 namespace labutils
 {
-	Buffer create_buffer( Allocator const& aAllocator, VkDeviceSize aSize, VkBufferUsageFlags aBufferUsage, VmaMemoryUsage aMemoryUsage )
+	Buffer create_buffer(Allocator const& aAllocator, 
+							VkDeviceSize aSize, 
+							VkBufferUsageFlags aBufferUsage, 
+							VmaMemoryUsage aMemoryUsage )
 	{
-		throw Error( "Not yet implemented" ); //TODO- (Section 2) implement me!
+		VkBufferCreateInfo bufferInfo{};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = aSize;
+		bufferInfo.usage = aBufferUsage;
+
+		VmaAllocationCreateInfo allocInfo{};
+		allocInfo.usage = aMemoryUsage;
+
+		VkBuffer buffer = VK_NULL_HANDLE;
+		VmaAllocation allocation = VK_NULL_HANDLE;
+
+		if (auto const res = vmaCreateBuffer(aAllocator.allocator, &bufferInfo, &allocInfo, &buffer, &allocation, nullptr);
+			VK_SUCCESS != res) {
+			throw Error( "Unable to allocate buffer.\n"
+				"vmaCreateBuffer() returned %s", to_string(res).c_str());
+		}
+		return Buffer( aAllocator.allocator, buffer, allocation);
 	}
 }
