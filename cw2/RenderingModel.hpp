@@ -300,10 +300,12 @@ namespace {
             };
 
             std::vector<std::vector<VkDescriptorImageInfo>> mat_imgInfos(materials.size());
+            std::vector<std::vector<VkDescriptorImageInfo>> dummy_imgInfos(materials.size());
             for (unsigned int i = 0; i < materials.size(); i ++) {
                 auto &mat = materials[i];
                 auto &mat_imgInfo = mat_imgInfos[i];
                 mat_imgInfo.reserve(5);
+                auto &dummy_imgInfo = dummy_imgInfos[i];
                 for (auto &idx : {
                     mat.baseColorTextureId, 
                     mat.metalnessTextureId, 
@@ -313,14 +315,14 @@ namespace {
                 }) {
                     if (idx != 0xffffffff)
                         mat_imgInfo.emplace_back(imgInfos[idx]);
-                    else 
-                        mat_imgInfo.emplace_back(dummyImgInfo);
+                    dummy_imgInfo.emplace_back(idx != 0xffffffff ? imgInfos[idx] : dummyImgInfo);
                 }
                 auto basic_set = lut::alloc_desc_set(aContext, dPool, pbrBaseLayout.handle);
                 material_basic_sets.push_back(basic_set);
                 auto dummy_set = lut::alloc_desc_set(aContext, dPool, pbrFullLayout.handle);
                 material_dummy_sets.push_back(dummy_set);
-                CreateWriteDesc(dummy_set, mat_imgInfo.data(), 5);
+                CreateWriteDesc(dummy_set, dummy_imgInfo.data(), 5);
+                
                 if (mat.alphaMaskTextureId != 0xffffffff) {
                     auto alpha_test_set = lut::alloc_desc_set(aContext, dPool, pbrHalfLayout.handle);
                     material_alpha_test_sets.push_back(alpha_test_set);

@@ -47,7 +47,7 @@ void main()
     int max_component = int(round(tbnquat.a * 3.0));
     // transform to [-sart(2)/2, sqrt(2)/2] range
     vec3 components = tbnquat.rgb * sqrt2 - sqrt2_half;
-    float max_component_value = sqrt(1.0f - length(components));
+    float max_component_value = sqrt(1.0f - dot(components, components));
     
     int idx = 0;
     vec4 quat = vec4(0.0);

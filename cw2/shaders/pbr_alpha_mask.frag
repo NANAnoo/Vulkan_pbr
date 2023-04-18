@@ -52,7 +52,7 @@ void main()
     {
         discard;
     }
-// get textures
+    // get textures
     vec3 albedo = texture(baseColor, v2f_tc).rgb;
     float metallic = texture(metalness, v2f_tc).r;
     float roughness = texture(roughness, v2f_tc).r;
@@ -79,7 +79,7 @@ void main()
 
     vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
 
-    vec3 specular     = (NDF * G * F) / (4.0 * NDotV * NDotL + 0.001);
+    vec3 specular = (NDF * G * F) / (4.0 * NDotV * NDotL + 0.001);
 
     float NdotL = max(dot(N, L), 0.0);                
     vec3 radiance = uLight.color.rgb;

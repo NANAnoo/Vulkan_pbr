@@ -86,15 +86,15 @@ namespace labutils
 		: VulkanContext( std::move(aOther) )
 		, window( std::exchange( aOther.window, VK_NULL_HANDLE ) )
 		, surface( std::exchange( aOther.surface, VK_NULL_HANDLE ) )
+		, maxAnisotropy(aOther.maxAnisotropy)
 		, presentFamilyIndex( aOther.presentFamilyIndex )
 		, presentQueue( std::exchange( aOther.presentQueue, VK_NULL_HANDLE ) )
 		, swapchain( std::exchange( aOther.swapchain, VK_NULL_HANDLE ) )
 		, swapImages( std::move( aOther.swapImages ) )
 		, swapViews( std::move( aOther.swapViews ) )
+		, currentDeviceFeatures(std::move(aOther.currentDeviceFeatures))
 		, swapchainFormat( aOther.swapchainFormat )
 		, swapchainExtent( aOther.swapchainExtent )
-		, maxAnisotropy(aOther.maxAnisotropy)
-		, currentDeviceFeatures(std::move(aOther.currentDeviceFeatures))
 	{}
 
 	VulkanWindow& VulkanWindow::operator=( VulkanWindow&& aOther ) noexcept

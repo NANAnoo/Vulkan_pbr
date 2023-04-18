@@ -46,25 +46,6 @@ float GeometryDF(float NDotH, float NDotL, float VDotH, float NDotV, float rough
     return min(1.0, min(left, right));
 }
 
-mat3 quaternionToRotationMatrix(vec4 q) {
-    float qx2 = q.x * q.x;
-    float qy2 = q.y * q.y;
-    float qz2 = q.z * q.z;
-    float qxqy = q.x * q.y;
-    float qxqz = q.x * q.z;
-    float qxqw = q.x * q.w;
-    float qyqz = q.y * q.z;
-    float qyqw = q.y * q.w;
-    float qzqw = q.z * q.w;
-
-    return mat3(
-        1.0 - 2.0 * (qy2 + qz2), 2.0 * (qxqy + qzqw),     2.0 * (qxqz - qyqw),
-        2.0 * (qxqy - qzqw),     1.0 - 2.0 * (qx2 + qz2), 2.0 * (qyqz + qxqw),
-        2.0 * (qxqz + qyqw),     2.0 * (qyqz - qxqw),     1.0 - 2.0 * (qx2 + qy2)
-    );
-}
-
-
 void main()
 {   
     if (texture(alphaMask, v2f_tc).a < 0.5)
@@ -76,7 +57,6 @@ void main()
     float roughness = texture(roughness, v2f_tc).r;
 
     // NORMAL MAP
-    //mat3 tbn = mat3(quaternionToRotationMatrix(normalize(quat)));
     vec3 N = normalize(tbn * (texture(normalMap, v2f_tc).rgb * 2.0 - 1.0));
     if (textureSize(normalMap, 0).x == 1.0) {
         N = normalize(tbn[2]);
