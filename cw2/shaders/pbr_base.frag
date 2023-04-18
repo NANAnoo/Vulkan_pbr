@@ -34,7 +34,7 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 
 float NormalDF(float NdotH, float roughness)
 {
-    float ap = 2.0 / (roughness * roughness * roughness * roughness + 0.000001) - 2.0;
+    float ap = 2.0 / (roughness * roughness * roughness * roughness + 0.001) - 2.0;
     return (ap + 2.0) / (2.0 * PI) * pow(NdotH, ap);
 }
 
@@ -78,7 +78,7 @@ void main()
 
     float NdotL = max(dot(N, L), 0.0);                
     vec3 radiance = uLight.color.rgb;
-    vec3 color = (kD * albedo / PI + specular) * NdotL * radiance;
+    vec3 color = (kD * albedo / PI + specular) * NdotL * radiance + albedo * 0.02;
 
     oColor = vec4(color, 1.0);
 }

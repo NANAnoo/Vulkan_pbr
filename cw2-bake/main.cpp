@@ -85,8 +85,8 @@ namespace
 int main() try
 {
 	process_model_(
-		"../assets/cw2/sponza-pbr.comp5822mesh",
-		"../assets-src/cw2/sponza-pbr.obj"
+		"assets/cw2/sponza-pbr.comp5822mesh",
+		"assets-src/cw2/sponza-pbr.obj"
 	);
 
 	return 0;

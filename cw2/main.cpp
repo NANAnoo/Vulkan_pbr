@@ -60,7 +60,7 @@ namespace
 	{
 		// Compiled shader code for the graphics pipeline(s)
 		// See sources in cw1/shaders/*. 
-#		define SHADERDIR_ "../assets/cw2/shaders/"
+#		define SHADERDIR_ "assets/cw2/shaders/"
 		constexpr char const* kVertShaderPath = SHADERDIR_ "default.vert.spv";
 		constexpr char const* kFragShaderPath = SHADERDIR_ "default.frag.spv";
 		constexpr char const* kPbrBaseFragShaderPath = SHADERDIR_ "pbr_base.frag.spv";
@@ -71,7 +71,7 @@ namespace
 		constexpr char const* kNormDebugFragPath = SHADERDIR_ "normal.frag.spv";
 #		undef SHADERDIR_
 
-		constexpr char const* kModelPath = "../assets/cw2/sponza-pbr.comp5822mesh";
+		constexpr char const* kModelPath = "assets/cw2/sponza-pbr.comp5822mesh";
 
 		// General rule: with a standard 24 bit or 32 bit float depth buffer,
 		// you can support a 1:1000 ratio between the near and far plane with

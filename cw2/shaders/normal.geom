@@ -29,8 +29,8 @@ void main() {
     vec4 center_tang = (v2f_tang[0] + v2f_tang[1] + v2f_tang[2]) / 3.0;
 
     vec3 N = normalize(center_normal);
-    vec3 T = normalize(center_tang.xyz);
-    //T = normalize(T - dot(T, N) * N);
+    vec3 T = normalize(center_tang.xyz * center_tang.w);
+    T = normalize(T - dot(T, N) * N);
     vec3 B = normalize(cross(T, N));
 
     mat3 TBN = mat3(T, B, N);
@@ -46,18 +46,18 @@ void main() {
     // EmitVertex();
     // EndPrimitive();
 
-    // gl_Position = uScene.P * uScene.V * center_pos;
-    // line_color = vec4(0.0, 1.0, 0.0, 1.0);
-    // EmitVertex();
-    // gl_Position = uScene.P * uScene.V * (center_pos + vec4(B * 0.1, 0.0));
-    // line_color = vec4(0.0, 1.0, 0.0, 1.0);
-    // EmitVertex();
-    // EndPrimitive();
+    gl_Position = uScene.P * uScene.V * center_pos;
+    line_color = vec4(0.0, 1.0, 0.0, 1.0);
+    EmitVertex();
+    gl_Position = uScene.P * uScene.V * (center_pos + vec4(center_normal * 0.05, 0.0));
+    line_color = vec4(0.0, 1.0, 0.0, 1.0);
+    EmitVertex();
+    EndPrimitive();
 
     gl_Position = uScene.P * uScene.V * center_pos;
     line_color = vec4(0.0, 0.0, 1.0, 1.0);
     EmitVertex();
-    gl_Position = uScene.P * uScene.V * (center_pos + vec4(N * 0.1, 0.0));
+    gl_Position = uScene.P * uScene.V * (center_pos + vec4(N * 0.05, 0.0));
     line_color = vec4(0.0, 0.0, 1.0, 1.0);
     EmitVertex();
     EndPrimitive();

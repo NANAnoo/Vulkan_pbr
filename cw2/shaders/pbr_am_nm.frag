@@ -36,7 +36,7 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 
 float NormalDF(float NdotH, float roughness)
 {
-    float ap = 2.0 / (roughness * roughness * roughness * roughness + 0.000001) - 2.0;
+    float ap = 2.0 / (roughness * roughness * roughness * roughness + 0.001) - 2.0;
     return (ap + 2.0) / (2.0 * PI) * pow(NdotH, ap);
 }
 
@@ -60,8 +60,8 @@ void main()
     vec3 N = normalize(normal_world);
     // calculate tangent space from normal and bitangent
 
-    vec3 T = normalize(v2f_tang.xyz);
-    //T = normalize(T - dot(T, N) * N);
+    vec3 T = normalize(v2f_tang.xyz * v2f_tang.w);
+    T = normalize(T - dot(T, N) * N);
     vec3 B = normalize(cross(T, N));
 
     mat3 TBN = mat3(T, B, N);
@@ -95,7 +95,7 @@ void main()
     // add to outgoing radiance Lo
     float NdotL = max(dot(N, L), 0.0);                
     vec3 radiance = uLight.color.rgb;
-    vec3 color = (kD * albedo / PI + specular) * NdotL * radiance;
+    vec3 color = (kD * albedo / PI + specular) * NdotL * radiance + albedo * 0.02;
 
     oColor = vec4(color, 1.0);
 }
