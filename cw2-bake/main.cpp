@@ -40,7 +40,7 @@ namespace
 	 * indicate that this is a custom format by myself (=scsmbil) with
 	 * additional tangent space information.
 	 */
-	constexpr char kFileVariant[16] = "default";
+	constexpr char kFileVariant[16] = "scsmbil-tan";
 
 	// types
 	struct TextureInfo_
@@ -85,8 +85,8 @@ namespace
 int main() try
 {
 	process_model_(
-		"assets/cw2/sponza-pbr.comp5822mesh",
-		"assets-src/cw2/sponza-pbr.obj"
+		"../assets/cw2/sponza-pbr.comp5822mesh",
+		"../assets-src/cw2/sponza-pbr.obj"
 	);
 
 	return 0;
@@ -101,7 +101,7 @@ namespace
 {
 	void process_model_( char const* aOutput, char const* aInputOBJ, glm::mat4x4 const& aStaticTransform )
 	{
-		static constexpr std::size_t vertexSize = sizeof(float)*(3+3+2);
+		static constexpr std::size_t vertexSize = sizeof(float)*(3+3+2+4);
 
 		// Figure out output paths
 		std::filesystem::path const outname( aOutput );
@@ -315,6 +315,7 @@ namespace
 			checked_write_( aOut, sizeof(glm::vec3)*vertexCount, imesh.vert.data() );
 			checked_write_( aOut, sizeof(glm::vec3)*vertexCount, imesh.norm.data() );
 			checked_write_( aOut, sizeof(glm::vec2)*vertexCount, imesh.text.data() );
+			checked_write_( aOut, sizeof(glm::vec4)*vertexCount, imesh.tangent.data() );
 
 			checked_write_( aOut, sizeof(std::uint32_t)*indexCount, imesh.indices.data() );
 		}

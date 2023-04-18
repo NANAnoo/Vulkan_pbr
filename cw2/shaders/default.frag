@@ -3,6 +3,7 @@
 layout( location = 0 ) in vec2 v2f_tc;
 layout( location = 1 ) in vec4 pos_world;
 layout( location = 2 ) in vec3 normal_world;
+layout( location = 3 ) in vec4 v2f_tang;
 
 layout( location = 0) out vec4 oColor;
 

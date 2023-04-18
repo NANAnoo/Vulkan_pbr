@@ -7,6 +7,8 @@
 
 #include <glm/glm.hpp>
 
+#include <tgen.h>
+
 namespace
 {
 	// Tweakables
@@ -131,6 +133,56 @@ IndexedMesh make_indexed_mesh( TriangleSoup const& aSoup, float aErrorTolerance 
 
 	ret.indices = std::move(indices);
 
+	std::vector<tgen::VIndexT> input_indices;
+	std::vector<tgen::RealT> input_positions;
+	std::vector<tgen::RealT> input_uvs;
+	std::vector<tgen::RealT> input_normals;
+	input_indices.reserve( ret.indices.size() );
+	input_positions.reserve( ret.vert.size() * 3 );
+	input_uvs.reserve( ret.text.size() * 2 );
+	input_normals.reserve( ret.norm.size() * 3 );
+
+	for( auto const& i : ret.indices )
+		input_indices.push_back( tgen::VIndexT(i) );
+	
+	for( auto const& v : ret.vert )
+	{
+		input_positions.push_back( tgen::RealT(v.x) );
+		input_positions.push_back( tgen::RealT(v.y) );
+		input_positions.push_back( tgen::RealT(v.z) );
+	}
+
+	for( auto const& t : ret.text )
+	{
+		input_uvs.push_back( tgen::RealT(t.x) );
+		input_uvs.push_back( tgen::RealT(t.y) );
+	}
+
+	for( auto const& n : ret.norm )
+	{
+		input_normals.push_back( tgen::RealT(n.x) );
+		input_normals.push_back( tgen::RealT(n.y) );
+		input_normals.push_back( tgen::RealT(n.z) );
+	}
+
+	std::vector<tgen::RealT> cTangents3D, cBitangents3D, vTangents3D, vBitangents3D, tangents4D;
+	tgen::computeCornerTSpace(
+		input_indices, input_indices, 
+		input_positions, input_uvs, 
+		cTangents3D, cBitangents3D
+	);
+	tgen::computeVertexTSpace(input_indices, cTangents3D, cBitangents3D, ret.text.size(), vTangents3D, vBitangents3D);
+	tgen::orthogonalizeTSpace(input_normals, vTangents3D, vBitangents3D);
+	tgen::computeTangent4D(input_normals, vTangents3D, vBitangents3D , tangents4D);
+
+	ret.tangent.resize( verts );
+	for (size_t i = 0; i < verts; ++i)
+	{
+		ret.tangent[i].x = float(std::isnan(tangents4D[i * 4 + 0]) ? 1.0 : tangents4D[i * 4 + 0]);
+		ret.tangent[i].y = float(std::isnan(tangents4D[i * 4 + 1]) ? 0.0 : tangents4D[i * 4 + 1]);
+		ret.tangent[i].z = float(std::isnan(tangents4D[i * 4 + 2]) ? 0.0 : tangents4D[i * 4 + 2]);
+		ret.tangent[i].w = float(tangents4D[i * 4 + 3]);
+	}
 	// meta-data & return
 	ret.aabbMin = bmin;
 	ret.aabbMax = bmax;

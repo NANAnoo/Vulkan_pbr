@@ -8,9 +8,11 @@
 
 namespace {
     struct RenderingMesh {
+        std::uint32_t materialId = 0;
         std::unique_ptr<VkVBO> positions = nullptr;
         std::unique_ptr<VkVBO> normals = nullptr;
         std::unique_ptr<VkVBO> texcoords = nullptr;
+        std::unique_ptr<VkVBO> tangents = nullptr;
 
         std::unique_ptr<VkIBO> indices = nullptr;
 
@@ -25,18 +27,33 @@ namespace {
             normals = std::move(other.normals);
             texcoords = std::move(other.texcoords);
             indices = std::move(other.indices);
+            tangents = std::move(other.tangents);
         }
         RenderingMesh& operator=(RenderingMesh&& other) noexcept {
             positions = std::move(other.positions);
             normals = std::move(other.normals);
             texcoords = std::move(other.texcoords);
             indices = std::move(other.indices);
+            tangents = std::move(other.tangents);
             return *this;
         }
     };
 
     class RenderingModel {
     public:
+        enum MaterialType {
+            Base = 0, // pbr base color
+            AlphaMasked = 1 << 0,
+            NormalMapped = 1 << 1,
+            All = AlphaMasked | NormalMapped
+        };
+
+        enum DescSetType {
+            Normal = 0,
+            AlphaMask = 1,
+            Full = 3,
+            NormalDebug = 4,
+        };
         RenderingModel() noexcept = default;
         // disable copy
         RenderingModel(const RenderingModel&) = delete;
@@ -44,10 +61,10 @@ namespace {
 
         // enable move
         RenderingModel(RenderingModel&& other) noexcept {
-            meshes = std::move(other.meshes);
+            meshes_by_material = std::move(other.meshes_by_material);
         }
         RenderingModel& operator=(RenderingModel&& other) noexcept {
-            meshes = std::move(other.meshes);
+            meshes_by_material = std::move(other.meshes_by_material);
             return *this;
         }
 
@@ -56,10 +73,13 @@ namespace {
             lut::Allocator const& aAllocator,
             const BakedModel& model) 
         {
-            meshes.resize(model.meshes.size());
+            texInfos = model.textures;
+            materials = model.materials;
             for (size_t i = 0; i < model.meshes.size(); ++i) {
                 auto& mesh = model.meshes[i];
-                auto& renderingMesh = meshes[i];
+                auto renderingMesh = RenderingMesh();
+
+                renderingMesh.materialId = mesh.materialId;
 
                 renderingMesh.positions = std::make_unique<VkVBO>(
                     aContext, aAllocator,
@@ -82,15 +102,85 @@ namespace {
                     mesh.indices.size(), 
                     (void *)(mesh.indices.data())
                 );
+                renderingMesh.tangents = std::make_unique<VkVBO>(
+                    aContext, aAllocator,
+                    mesh.tangents.size() * sizeof(glm::vec4),
+                    (void *)(mesh.tangents.data())
+                );
+                auto &mat = materials[mesh.materialId];
+                auto type = MaterialType::Base;
+                if (mat.alphaMaskTextureId != 0xffffffff) {
+                    type = MaterialType(type | MaterialType::AlphaMasked);
+                }
+                if (mat.normalMapTextureId != 0xffffffff) {
+                    type = MaterialType(type | MaterialType::NormalMapped);
+                }
+                meshes_by_material[type][mesh.materialId].push_back(std::move(renderingMesh));
             }
+
+            auto TexDescLayourHelper = [&](unsigned int tex_count) {
+                std::vector<VkDescriptorSetLayoutBinding> bindings(tex_count);
+                for (int i = 0; i < tex_count; i ++) {
+                    bindings[i].binding = i; // bind texture sampler 0
+                    bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    bindings[i].descriptorCount = 1; 
+                    bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_GEOMETRY_BIT; 
+                }
+                
+                VkDescriptorSetLayoutCreateInfo layoutInfo{};
+                layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+                layoutInfo.bindingCount = bindings.size();
+                layoutInfo.pBindings = bindings.data();
+
+                VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+                if( auto const res = vkCreateDescriptorSetLayout( 
+                        aContext.device, 
+                        &layoutInfo,
+                        nullptr, 
+                        &layout ); 
+                    VK_SUCCESS != res )
+                {
+                    throw lut::Error( "Unable to create descriptor set layout\n" 
+                        "vkCreateDescriptorSetLayout() returned %s", lut::to_string(res).c_str());
+                }
+                return lut::DescriptorSetLayout( aContext.device, layout ); 
+            };
+
+            std::vector<std::string> paths;
+            for (auto& tex : texInfos) {
+                paths.push_back(tex.path);
+            }
+            labutils::CommandPool tempPool = labutils::create_command_pool(aContext, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+            auto res = labutils::loadTextures(aContext, tempPool.handle, aAllocator, paths);
+            // create img view for each img
+            for (auto& [path, img] : res) {
+                auto texView = lut::create_image_view_texture2d(aContext, img.image, VK_FORMAT_R8G8B8A8_SRGB);
+                PackedTexture tex{
+                    std::move(img),
+                    std::move(texView)
+                };
+                allTextures.insert({
+                    path,
+                    std::move(tex)
+                });
+            }
+            pbrBaseLayout = TexDescLayourHelper(3);
+            pbrHalfLayout = TexDescLayourHelper(4);
+            pbrFullLayout = TexDescLayourHelper(5);
+            debugLayout = TexDescLayourHelper(1);
         }
 
         void upload(VkCommandBuffer uploadCmd) {
-            for (auto& mesh : meshes) {
-                mesh.positions->upload(uploadCmd);
-                mesh.normals->upload(uploadCmd);
-                mesh.texcoords->upload(uploadCmd);
-                mesh.indices->upload(uploadCmd);
+            for (auto& [_, mesh_map] : meshes_by_material) {
+                for (auto &[_, meshes] : mesh_map) {
+                    for (auto& mesh : meshes) {
+                        mesh.positions->upload(uploadCmd);
+                        mesh.normals->upload(uploadCmd);
+                        mesh.texcoords->upload(uploadCmd);
+                        mesh.tangents->upload(uploadCmd);
+                        mesh.indices->upload(uploadCmd);
+                    }
+                }
             }
         }
 
@@ -101,18 +191,115 @@ namespace {
             // normals
             .addVertexInfo(1, 1, sizeof(float) * 3, VK_FORMAT_R32G32B32_SFLOAT)
             // texcoords
-            .addVertexInfo(2, 2, sizeof(float) * 2, VK_FORMAT_R32G32_SFLOAT);;
+            .addVertexInfo(2, 2, sizeof(float) * 2, VK_FORMAT_R32G32_SFLOAT)
+            // tangents
+            .addVertexInfo(3, 3, sizeof(float) * 4, VK_FORMAT_R32G32B32A32_SFLOAT);
             return aGenerator;
         }
 
-        void onDraw(VkCommandBuffer cmd) {
-            for (auto& mesh : meshes) {
-                VkBuffer buffers[3] = { mesh.positions->get(), mesh.normals->get(), mesh.texcoords->get()};
-                VkDeviceSize offsets[3] = { 0, 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 3, buffers, offsets);
-                mesh.indices->bind(cmd);
-                mesh.indices->draw(cmd);
+        void onDraw(MaterialType aType, DescSetType which_set, VkCommandBuffer cmd, const std::function<void(VkDescriptorSet set)> &aSetCallback) {
+            for (auto& [mat_id, meshes] : meshes_by_material[aType]) {
+                if (which_set == DescSetType::Normal)
+                    aSetCallback(material_basic_sets[mat_id]);
+                else if (which_set == DescSetType::AlphaMask)
+                    aSetCallback(material_alpha_test_sets[mat_id]);
+                else if (which_set == DescSetType::Full)
+                    aSetCallback(material_full_sets[mat_id]);
+                else if (which_set == DescSetType::NormalDebug)
+                    aSetCallback(material_normdebug_sets[mat_id]);
+                for (auto& mesh : meshes) {
+                    VkBuffer buffers[4] = { mesh.positions->get(), mesh.normals->get(), mesh.texcoords->get(), mesh.tangents->get()};
+                    VkDeviceSize offsets[4] = { 0, 0, 0 , 0};
+                    vkCmdBindVertexBuffers(cmd, 0, 4, buffers, offsets);
+                    mesh.indices->bind(cmd);
+                    mesh.indices->draw(cmd);
+                }
             }
+        }
+
+        void createSetsWith(
+            lut::VulkanContext const& aContext,
+            VkDescriptorPool dPool,
+            VkSampler aSampler)
+        {
+            // create material descriptor sets
+            std::vector<VkDescriptorImageInfo> imgInfos;
+            std::vector<VkWriteDescriptorSet> texWriteSets;
+            
+            // have to reserve a enough space
+            // since when vector increase
+            // stl will move the old array buffer to the new buffer
+            imgInfos.reserve(texInfos.size());
+            // load & upload all textures
+            for (auto &info :texInfos) {
+                auto &tex = allTextures[info.path];
+                imgInfos.push_back({
+                    aSampler,
+                    tex.view.handle,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                });
+            }
+
+            auto CreateWriteDesc = [&](VkDescriptorSet set, VkDescriptorImageInfo *imgInfo, unsigned int count) {
+                VkWriteDescriptorSet desc{};
+                desc.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                desc.dstSet = set; 
+                desc.dstBinding = 0; //
+                desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                desc.descriptorCount = count; 
+                desc.pImageInfo = imgInfo; 
+                texWriteSets.emplace_back(desc);
+            };
+
+            std::vector<std::vector<VkDescriptorImageInfo>> mat_imgInfos(materials.size());
+            for (unsigned int i = 0; i < materials.size(); i ++) {
+                auto &mat = materials[i];
+                auto &mat_imgInfo = mat_imgInfos[i];
+                mat_imgInfo.reserve(5);
+                for (auto &idx : {
+                    mat.baseColorTextureId, 
+                    mat.metalnessTextureId, 
+                    mat.roughnessTextureId,
+                    mat.alphaMaskTextureId,
+                    mat.normalMapTextureId
+                }) {
+                    if (idx != 0xffffffff)
+                        mat_imgInfo.emplace_back(imgInfos[idx]);
+                }
+                auto basic_set = lut::alloc_desc_set(aContext, dPool, pbrBaseLayout.handle);
+                material_basic_sets.push_back(basic_set);
+                if (mat.alphaMaskTextureId != 0xffffffff) {
+                    auto alpha_test_set = lut::alloc_desc_set(aContext, dPool, pbrHalfLayout.handle);
+                    material_alpha_test_sets.push_back(alpha_test_set);
+                    CreateWriteDesc(alpha_test_set, mat_imgInfo.data(), 4);
+                    if ( mat.normalMapTextureId != 0xffffffff) {
+                        auto full_set = lut::alloc_desc_set(aContext, dPool, pbrFullLayout.handle);
+                        material_full_sets.push_back(full_set);
+                        CreateWriteDesc(full_set, mat_imgInfo.data(), 5);
+                    } else {
+                        material_full_sets.push_back(alpha_test_set);
+                    }
+                } else {
+                    if ( mat.normalMapTextureId != 0xffffffff) {
+                        auto normal_map_set = lut::alloc_desc_set(aContext, dPool, pbrHalfLayout.handle);
+                        material_full_sets.push_back(normal_map_set);
+                        CreateWriteDesc(normal_map_set, mat_imgInfo.data(), 4);
+                    } else {
+                        material_full_sets.push_back(basic_set);
+                    }
+                    material_alpha_test_sets.push_back(basic_set);
+                }
+                CreateWriteDesc(basic_set, mat_imgInfo.data(), 3);
+
+                if (mat.normalMapTextureId != 0xffffffff) {
+                    auto debug_set = lut::alloc_desc_set(aContext, dPool, debugLayout.handle);
+                    material_normdebug_sets[i] = debug_set;
+                    CreateWriteDesc(debug_set, &imgInfos[mat.normalMapTextureId], 1);
+                }
+            }
+
+            // update descriptor set
+            vkUpdateDescriptorSets( aContext.device, static_cast<std::uint32_t>(texWriteSets.size()), texWriteSets.data(), 0, nullptr );
         }
 
         static void uploadScope(lut::VulkanContext const& aContext, const std::function<void(VkCommandBuffer)> &cb) {
@@ -165,7 +352,26 @@ namespace {
             vkFreeCommandBuffers( aContext.device, tempPool.handle, 1, &uploadCmd );
         }
 
+        lut::DescriptorSetLayout pbrBaseLayout; // base color + metalness + roughness
+        lut::DescriptorSetLayout pbrHalfLayout; // alpha mask or normal map
+        lut::DescriptorSetLayout pbrFullLayout;  // alpha mask + normal map
+        lut::DescriptorSetLayout debugLayout; // normal map debug
+
     private:
-        std::vector<RenderingMesh> meshes;
+    	struct PackedTexture {
+            labutils::Image img{};
+            labutils::ImageView view{};
+        };
+
+        // texture data map
+        std::unordered_map<std::string, PackedTexture> allTextures;
+        std::vector<VkDescriptorSet> material_basic_sets;
+        std::vector<VkDescriptorSet> material_alpha_test_sets;
+        std::vector<VkDescriptorSet> material_full_sets;
+        std::unordered_map<unsigned int, VkDescriptorSet> material_normdebug_sets;
+
+        std::vector<BakedTextureInfo> texInfos;
+        std::unordered_map<MaterialType, std::unordered_map<unsigned int, std::vector<RenderingMesh>>> meshes_by_material;
+        std::vector<BakedMaterialInfo> materials;
     };
 }

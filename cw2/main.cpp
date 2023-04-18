@@ -63,6 +63,12 @@ namespace
 #		define SHADERDIR_ "../assets/cw2/shaders/"
 		constexpr char const* kVertShaderPath = SHADERDIR_ "default.vert.spv";
 		constexpr char const* kFragShaderPath = SHADERDIR_ "default.frag.spv";
+		constexpr char const* kPbrBaseFragShaderPath = SHADERDIR_ "pbr_base.frag.spv";
+		constexpr char const* kPbrAMFragShaderPath = SHADERDIR_ "pbr_alpha_mask.frag.spv";
+		constexpr char const* kPbrNMFragShaderPath = SHADERDIR_ "pbr_normalmap.frag.spv";
+		constexpr char const* kPbrAMNMFragShaderPath = SHADERDIR_ "pbr_am_nm.frag.spv";
+		constexpr char const* kNormDebugGeomPath = SHADERDIR_ "normal.geom.spv";
+		constexpr char const* kNormDebugFragPath = SHADERDIR_ "normal.frag.spv";
 #		undef SHADERDIR_
 
 		constexpr char const* kModelPath = "../assets/cw2/sponza-pbr.comp5822mesh";
@@ -81,6 +87,9 @@ namespace
 
 		enum ShadingMode{
 			Basic,
+			PBR_base,
+			PBR_alpha_mask,
+			PBR_alpha_mask_normal_map,
 		};
 	}
 
@@ -165,6 +174,7 @@ int main() try
 	static float cursor_x = 0, cursor_y = 0, offset_x = 0, offset_y = 0;
 	static cfg::ShadingMode sCurrentMode = cfg::Basic;
 	static bool shouldGeneratePipeLine = true;
+	static bool showDebugNormal = false;
 	glfwSetKeyCallback( window.window, 
 	[]( GLFWwindow* aWindow, int aKey, int, int aAction, int){
 		if( GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction )
@@ -177,6 +187,20 @@ int main() try
 				// normal mode
 				shouldGeneratePipeLine = (sCurrentMode != cfg::Basic);
 				sCurrentMode = cfg::Basic;
+			} else if (aKey == GLFW_KEY_2) {
+				// pbr mode
+				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_base);
+				sCurrentMode = cfg::PBR_base;
+			} else if (aKey == GLFW_KEY_3) {
+				// pbr alpha mask mode
+				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_alpha_mask);
+				sCurrentMode = cfg::PBR_alpha_mask;
+			} else if (aKey == GLFW_KEY_4) {
+				// pbr alpha mask normal map mode
+				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_alpha_mask_normal_map);
+				sCurrentMode = cfg::PBR_alpha_mask_normal_map;
+			} else if (aKey == GLFW_KEY_N) {
+				showDebugNormal = !showDebugNormal;
 			}
 		} else if (aAction == GLFW_PRESS) {
 			sController.onKeyPress(aKey);
@@ -226,9 +250,15 @@ int main() try
 	// create all shaders
 	lut::ShaderModule baseVert = lut::load_shader_module(window, cfg::kVertShaderPath);
 	lut::ShaderModule baseFrag = lut::load_shader_module(window, cfg::kFragShaderPath);
+	lut::ShaderModule pbrBaseFrag = lut::load_shader_module(window, cfg::kPbrBaseFragShaderPath);
+	lut::ShaderModule pbrAMFrag = lut::load_shader_module(window, cfg::kPbrAMFragShaderPath);
+	lut::ShaderModule pbrNMFrag = lut::load_shader_module(window, cfg::kPbrNMFragShaderPath);
+	lut::ShaderModule pbrAMNMFrag = lut::load_shader_module(window, cfg::kPbrAMNMFragShaderPath);
+	lut::ShaderModule normDebugGeom = lut::load_shader_module(window, cfg::kNormDebugGeomPath);
+	lut::ShaderModule normDebugFrag = lut::load_shader_module(window, cfg::kNormDebugFragPath);
 
 	// create scene ubo
-	VkUBO<glsl::SceneUniform> sceneUBO(window, allocator, dpool, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT, 0);
+	VkUBO<glsl::SceneUniform> sceneUBO(window, allocator, dpool, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_GEOMETRY_BIT, 0);
 	sceneUBO.data = std::make_unique<glsl::SceneUniform>();
 	
 	// create light ubo
@@ -255,6 +285,19 @@ int main() try
 	.setPolyGonMode(VK_POLYGON_MODE_FILL)
 	.enableDepthTest(true)
 	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+	PipeLineGenerator normDebugPipeGen;
+	normDebugPipeGen
+	.addDescLayout(sceneUBO.layout.handle)
+	.enableBlend(false)
+	.setCullMode(VK_CULL_MODE_BACK_BIT)
+	.setPolyGonMode(VK_POLYGON_MODE_FILL)
+	.enableDepthTest(true)
+	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+	.bindVertShader(baseVert)
+	.bindGeomShader(normDebugGeom)
+	.bindFragShader(normDebugFrag)
+	.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 
 	// cache all pipeline
 	std::unordered_map<cfg::ShadingMode, std::vector<RenderPipeLine>> pipelineMap;
@@ -285,6 +328,7 @@ int main() try
 	{
 		auto tmp = load_baked_model(cfg::kModelPath);
 		model->load(window, allocator, tmp);
+		model->createSetsWith(window, dpool.handle, anisotropicSampler.handle);
 		// upload data
 		RenderingModel::uploadScope(
 			window, 
@@ -293,6 +337,9 @@ int main() try
 			}
 		);
 	}
+	normDebugPipeGen = model->bindPipeLine(normDebugPipeGen);
+	normDebugPipeGen.addDescLayout(model->debugLayout.handle);
+	auto normDebugPipe = normDebugPipeGen.generate(window, renderPass.handle);
 	
 	// Application main loop
 	bool recreateSwapchain = false;
@@ -327,6 +374,7 @@ int main() try
 			if( changes.changedSize ) {
 				std::tie(depthBuffer,depthBufferView) = create_depth_buffer( window, allocator );
 				basicPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				normDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 			}
 
 			framebuffers.clear();
@@ -343,8 +391,10 @@ int main() try
 		if (shouldGeneratePipeLine) {
 			shouldGeneratePipeLine = false;
 			basicPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+			normDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 			// check if there is a pipeline cache
 			// also lazy loading here
+			normDebugPipe = normDebugPipeGen.generate(window, renderPass.handle);
 			if (sCurrentMode == cfg::Basic) {
 				pipelineMap[cfg::Basic].emplace_back(
 					model->
@@ -353,7 +403,70 @@ int main() try
 					.bindFragShader(baseFrag)
 					.generate(window, renderPass.handle)
 				);
-			}
+			} else if (sCurrentMode == cfg::PBR_base) {
+				pipelineMap[cfg::PBR_base].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrBaseFrag)
+					.addDescLayout(model->pbrBaseLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+			} else if (sCurrentMode == cfg::PBR_alpha_mask) {
+				pipelineMap[cfg::PBR_alpha_mask].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrBaseFrag)
+					.addDescLayout(model->pbrBaseLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+				// only alpa mask
+				pipelineMap[cfg::PBR_alpha_mask].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrAMFrag)
+					.addDescLayout(model->pbrHalfLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+			} else if (sCurrentMode == cfg::PBR_alpha_mask_normal_map) {
+				pipelineMap[cfg::PBR_alpha_mask_normal_map].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrBaseFrag)
+					.addDescLayout(model->pbrBaseLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+				// only alpa mask
+				pipelineMap[cfg::PBR_alpha_mask_normal_map].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrAMFrag)
+					.addDescLayout(model->pbrHalfLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+				// only normal map
+				pipelineMap[cfg::PBR_alpha_mask_normal_map].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrNMFrag)
+					.addDescLayout(model->pbrHalfLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+				// all
+				pipelineMap[cfg::PBR_alpha_mask_normal_map].emplace_back(
+					model->
+					bindPipeLine(basicPipeGen)
+					.bindVertShader(baseVert)
+					.bindFragShader(pbrAMNMFrag)
+					.addDescLayout(model->pbrFullLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+			} 
 		}
 
 		// acquire swapchain image.
@@ -392,6 +505,34 @@ int main() try
 		assert(std::size_t(imageIndex) < cbuffers.size());
 		assert(std::size_t(imageIndex) < framebuffers.size());
 
+		auto BeginPipeline = [&](VkCommandBuffer cmdBuffer, const RenderPipeLine &pipe) {
+			vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.pipe.handle);
+			vkCmdBindDescriptorSets(cmdBuffer, 
+				VK_PIPELINE_BIND_POINT_GRAPHICS, 
+				pipe.layout.handle, 0,
+				1, 
+				&sceneUBO.set, 
+				0, nullptr
+			);
+			vkCmdBindDescriptorSets(cmdBuffer, 
+				VK_PIPELINE_BIND_POINT_GRAPHICS, 
+				pipe.layout.handle, 1,
+				1, 
+				&lightUBO.set, 
+				0, nullptr
+			);
+		};
+
+		auto BindingMatSet = [](const RenderPipeLine &pipe, VkCommandBuffer cmdBuffer, VkDescriptorSet mat_set) {
+			vkCmdBindDescriptorSets(cmdBuffer, 
+				VK_PIPELINE_BIND_POINT_GRAPHICS, 
+				pipe.layout.handle, 2,
+				1, 
+				&mat_set, 
+				0, nullptr
+			);
+		};
+
 		record_commands(
 			cbuffers[imageIndex], 
 			renderPass.handle, 
@@ -403,22 +544,93 @@ int main() try
 			[&](VkCommandBuffer cmdBuffer) {
 				if (sCurrentMode == cfg::Basic) {
 					auto& pipe = pipelineMap[cfg::Basic][0];
-					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.pipe.handle);
+					BeginPipeline(cmdBuffer, pipe);
+					model->onDraw(RenderingModel::Base, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::AlphaMasked, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::All, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+				} else if (sCurrentMode == cfg::PBR_base) {
+					auto& pipe = pipelineMap[cfg::PBR_base][0];
+					BeginPipeline(cmdBuffer, pipe);
+					model->onDraw(RenderingModel::Base, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+					model->onDraw(RenderingModel::AlphaMasked, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+					model->onDraw(RenderingModel::All, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+				} else if (sCurrentMode == cfg::PBR_alpha_mask) {
+					auto& pipe = pipelineMap[cfg::PBR_alpha_mask][0];
+					auto& pipe_alpha_test = pipelineMap[cfg::PBR_alpha_mask][1];
+					BeginPipeline(cmdBuffer, pipe);
+					model->onDraw(RenderingModel::Base, RenderingModel::AlphaMask, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::AlphaMask, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+
+					BeginPipeline(cmdBuffer, pipe_alpha_test);
+					model->onDraw(RenderingModel::AlphaMasked, RenderingModel::AlphaMask, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe_alpha_test, cmdBuffer, mat_set);
+					});
+					model->onDraw(RenderingModel::All, RenderingModel::AlphaMask, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe_alpha_test, cmdBuffer, mat_set);
+					});
+				} else if (sCurrentMode == cfg::PBR_alpha_mask_normal_map) {
+					auto& pipe = pipelineMap[cfg::PBR_alpha_mask_normal_map][0];
+					auto& pipe_alpha_test = pipelineMap[cfg::PBR_alpha_mask_normal_map][1];
+					auto& pipe_normal_map = pipelineMap[cfg::PBR_alpha_mask_normal_map][2];
+					auto& pipe_normal_map_alpha_test = pipelineMap[cfg::PBR_alpha_mask_normal_map][3];
+					BeginPipeline(cmdBuffer, pipe);
+					model->onDraw(RenderingModel::Base, RenderingModel::Full, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
+					BeginPipeline(cmdBuffer, pipe_alpha_test);
+					model->onDraw(RenderingModel::AlphaMasked, RenderingModel::Full, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe_alpha_test, cmdBuffer, mat_set);
+					});
+					BeginPipeline(cmdBuffer, pipe_normal_map);
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::Full, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe_normal_map, cmdBuffer, mat_set);
+					});
+					BeginPipeline(cmdBuffer, pipe_normal_map_alpha_test);
+					model->onDraw(RenderingModel::All, RenderingModel::Full, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe_normal_map_alpha_test, cmdBuffer, mat_set);
+					});
+				}
+				if (showDebugNormal) {
+					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, normDebugPipe.pipe.handle);
 					vkCmdBindDescriptorSets(cmdBuffer, 
 						VK_PIPELINE_BIND_POINT_GRAPHICS, 
-						pipe.layout.handle, 0,
+						normDebugPipe.layout.handle, 0,
 						1, 
 						&sceneUBO.set, 
 						0, nullptr
 					);
-					vkCmdBindDescriptorSets(cmdBuffer, 
-						VK_PIPELINE_BIND_POINT_GRAPHICS, 
-						pipe.layout.handle, 1,
-						1, 
-						&lightUBO.set, 
-						0, nullptr
-					);
-					model->onDraw(cmdBuffer);
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::NormalDebug, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						vkCmdBindDescriptorSets(cmdBuffer, 
+							VK_PIPELINE_BIND_POINT_GRAPHICS, 
+							normDebugPipe.layout.handle, 1,
+							1, 
+							&mat_set, 
+							0, nullptr
+						);
+					});
+					model->onDraw(RenderingModel::All, RenderingModel::NormalDebug, cmdBuffer, [&](VkDescriptorSet mat_set) {
+						vkCmdBindDescriptorSets(cmdBuffer, 
+							VK_PIPELINE_BIND_POINT_GRAPHICS, 
+							normDebugPipe.layout.handle, 1,
+							1, 
+							&mat_set, 
+							0, nullptr
+						);
+					});
 				}
 			}
 		);
