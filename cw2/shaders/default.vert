@@ -16,13 +16,16 @@ layout( set = 0, binding = 0 ) uniform UScene
 layout( location = 0 ) out vec2 v2f_tc;
 layout( location = 1 ) out vec4 pos_world;
 layout( location = 2 ) out vec3 normal_world;
-layout( location = 3 ) out vec4 v2f_tang;
+layout( location = 3 ) out mat3 tbn;
 
 void main()
 {
     pos_world = uScene.M * vec4( position, 1.f );
-    normal_world = mat3( uScene.M ) * normal;
+    normal_world = normalize(mat3( uScene.M ) * normal);
     gl_Position = uScene.P * uScene.V *pos_world;
-    v2f_tang = uScene.M * tangent;
     v2f_tc = tex_coord;
+
+    vec3 T = normalize( mat3( uScene.M ) * tangent.xyz );
+    vec3 B = normalize( cross( normal_world, T )) * tangent.w; 
+    tbn = mat3( T, B, normal_world );
 }

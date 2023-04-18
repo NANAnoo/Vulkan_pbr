@@ -91,6 +91,7 @@ struct BakedMeshData
 	std::vector<glm::vec2> texcoords;
 	std::vector<glm::vec3> normals;
 	std::vector<glm::vec4> tangents;
+	std::vector<std::int32_t> tbnquads;
 
 	std::vector<std::uint32_t> indices;
 };

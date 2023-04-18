@@ -13,6 +13,7 @@ namespace {
         std::unique_ptr<VkVBO> normals = nullptr;
         std::unique_ptr<VkVBO> texcoords = nullptr;
         std::unique_ptr<VkVBO> tangents = nullptr;
+        std::unique_ptr<VkVBO> tbnquads = nullptr;
 
         std::unique_ptr<VkIBO> indices = nullptr;
 
@@ -28,6 +29,7 @@ namespace {
             texcoords = std::move(other.texcoords);
             indices = std::move(other.indices);
             tangents = std::move(other.tangents);
+            tbnquads = std::move(other.tbnquads);
         }
         RenderingMesh& operator=(RenderingMesh&& other) noexcept {
             positions = std::move(other.positions);
@@ -35,6 +37,7 @@ namespace {
             texcoords = std::move(other.texcoords);
             indices = std::move(other.indices);
             tangents = std::move(other.tangents);
+            tbnquads = std::move(other.tbnquads);
             return *this;
         }
     };
@@ -107,6 +110,11 @@ namespace {
                     mesh.tangents.size() * sizeof(glm::vec4),
                     (void *)(mesh.tangents.data())
                 );
+                renderingMesh.tbnquads = std::make_unique<VkVBO>(
+                    aContext, aAllocator,
+                    mesh.tbnquads.size() * sizeof(std::uint32_t),
+                    (void *)(mesh.tbnquads.data())
+                );
                 auto &mat = materials[mesh.materialId];
                 auto type = MaterialType::Base;
                 if (mat.alphaMaskTextureId != 0xffffffff) {
@@ -168,6 +176,13 @@ namespace {
             pbrHalfLayout = TexDescLayourHelper(4);
             pbrFullLayout = TexDescLayourHelper(5);
             debugLayout = TexDescLayourHelper(1);
+
+            uploadScope(aContext, [&aContext, &aAllocator, this](VkCommandBuffer uploadCmd) {
+                // load dummy texture
+                dummyTexture = lut::load_dummy_texture(aContext, uploadCmd, aAllocator);
+                auto const& [img, _] = dummyTexture;
+                dummyTextureView = lut::create_image_view_texture2d(aContext, img.image, VK_FORMAT_R8G8B8A8_SRGB);
+            });
         }
 
         void upload(VkCommandBuffer uploadCmd) {
@@ -178,6 +193,7 @@ namespace {
                         mesh.normals->upload(uploadCmd);
                         mesh.texcoords->upload(uploadCmd);
                         mesh.tangents->upload(uploadCmd);
+                        mesh.tbnquads->upload(uploadCmd);
                         mesh.indices->upload(uploadCmd);
                     }
                 }
@@ -194,6 +210,17 @@ namespace {
             .addVertexInfo(2, 2, sizeof(float) * 2, VK_FORMAT_R32G32_SFLOAT)
             // tangents
             .addVertexInfo(3, 3, sizeof(float) * 4, VK_FORMAT_R32G32B32A32_SFLOAT);
+            return aGenerator;
+        }
+
+        PipeLineGenerator bindTbnCompressedPipeLine(PipeLineGenerator aGenerator) {
+            aGenerator
+            // positions
+            .addVertexInfo(0, 0, sizeof(float) * 3, VK_FORMAT_R32G32B32_SFLOAT)
+            // texcoords
+            .addVertexInfo(1, 1, sizeof(float) * 2, VK_FORMAT_R32G32_SFLOAT)
+            // tbnquads
+            .addVertexInfo(2, 2, sizeof(uint32_t), VK_FORMAT_A2R10G10B10_UNORM_PACK32);
             return aGenerator;
         }
 
@@ -217,6 +244,21 @@ namespace {
             }
         }
 
+        void tbnCompressedDraw(VkCommandBuffer cmd, const std::function<void(VkDescriptorSet set)> &aSetCallback) {
+            for (auto &[_, meshes] : meshes_by_material) {
+                for (auto &[mat_id, sub_meshes] : meshes) {
+                    aSetCallback(material_dummy_sets[mat_id]);
+                    for (auto& mesh : sub_meshes) {
+                        VkBuffer buffers[3] = { mesh.positions->get(), mesh.texcoords->get(), mesh.tbnquads->get() };
+                        VkDeviceSize offsets[3] = { 0, 0, 0 };
+                        vkCmdBindVertexBuffers(cmd, 0, 3, buffers, offsets);
+                        mesh.indices->bind(cmd);
+                        mesh.indices->draw(cmd);
+                    }
+                }
+            }
+        }
+
         void createSetsWith(
             lut::VulkanContext const& aContext,
             VkDescriptorPool dPool,
@@ -225,6 +267,12 @@ namespace {
             // create material descriptor sets
             std::vector<VkDescriptorImageInfo> imgInfos;
             std::vector<VkWriteDescriptorSet> texWriteSets;
+
+            VkDescriptorImageInfo dummyImgInfo = {
+                aSampler,
+                dummyTextureView.handle,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            };
             
             // have to reserve a enough space
             // since when vector increase
@@ -265,9 +313,14 @@ namespace {
                 }) {
                     if (idx != 0xffffffff)
                         mat_imgInfo.emplace_back(imgInfos[idx]);
+                    else 
+                        mat_imgInfo.emplace_back(dummyImgInfo);
                 }
                 auto basic_set = lut::alloc_desc_set(aContext, dPool, pbrBaseLayout.handle);
                 material_basic_sets.push_back(basic_set);
+                auto dummy_set = lut::alloc_desc_set(aContext, dPool, pbrFullLayout.handle);
+                material_dummy_sets.push_back(dummy_set);
+                CreateWriteDesc(dummy_set, mat_imgInfo.data(), 5);
                 if (mat.alphaMaskTextureId != 0xffffffff) {
                     auto alpha_test_set = lut::alloc_desc_set(aContext, dPool, pbrHalfLayout.handle);
                     material_alpha_test_sets.push_back(alpha_test_set);
@@ -365,9 +418,14 @@ namespace {
 
         // texture data map
         std::unordered_map<std::string, PackedTexture> allTextures;
+
+        std::tuple<lut::Image, lut::Buffer> dummyTexture;
+        labutils::ImageView dummyTextureView;
+        
         std::vector<VkDescriptorSet> material_basic_sets;
         std::vector<VkDescriptorSet> material_alpha_test_sets;
         std::vector<VkDescriptorSet> material_full_sets;
+        std::vector<VkDescriptorSet> material_dummy_sets;
         std::unordered_map<unsigned int, VkDescriptorSet> material_normdebug_sets;
 
         std::vector<BakedTextureInfo> texInfos;

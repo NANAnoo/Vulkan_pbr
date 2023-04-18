@@ -3,7 +3,7 @@
 layout( location = 0 ) in vec2 v2f_tc;
 layout( location = 1 ) in vec4 pos_world;
 layout( location = 2 ) in vec3 normal_world;
-layout( location = 3 ) in vec4 v2f_tang;
+layout( location = 3 ) in mat3 tbn;
 
 layout( location = 0) out vec4 oColor;
 
@@ -57,17 +57,7 @@ void main()
     float metallic = texture(metalness, v2f_tc).r;
     float roughness = texture(roughness, v2f_tc).r;
 
-    vec3 N = normalize(normal_world);
-    // calculate tangent space from normal and bitangent
-
-    vec3 T = normalize(v2f_tang.xyz * v2f_tang.w);
-    T = normalize(T - dot(T, N) * N);
-    vec3 B = normalize(cross(T, N));
-
-    mat3 TBN = mat3(T, B, N);
-
-    // NORMAL MAP
-    N = normalize(TBN * (texture(normalMap, v2f_tc).rgb * 2.0 - 1.0));
+    vec3 N = normalize(tbn * (texture(normalMap, v2f_tc).rgb * 2.0 - 1.0));
 
     // calculate view and light direction
     vec3 L = normalize(vec3(uLight.pos - pos_world));

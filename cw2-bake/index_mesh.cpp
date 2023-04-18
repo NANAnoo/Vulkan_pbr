@@ -1,4 +1,5 @@
 #include "index_mesh.hpp"
+#include "glm/gtc/quaternion.hpp"
 
 #include <numeric>
 #include <unordered_map>
@@ -182,6 +183,53 @@ IndexedMesh make_indexed_mesh( TriangleSoup const& aSoup, float aErrorTolerance 
 		ret.tangent[i].y = float(std::isnan(tangents4D[i * 4 + 1]) ? 0.0 : tangents4D[i * 4 + 1]);
 		ret.tangent[i].z = float(std::isnan(tangents4D[i * 4 + 2]) ? 0.0 : tangents4D[i * 4 + 2]);
 		ret.tangent[i].w = float(tangents4D[i * 4 + 3]);
+	}
+
+	ret.tbnquad.resize( verts );
+	for (size_t i = 0; i < verts; ++i)
+	{
+		glm::vec3 T = glm::normalize(glm::vec3(ret.tangent[i]));
+		glm::vec3 N = glm::normalize(ret.norm[i]);
+		glm::vec3 B = glm::normalize(glm::cross(N, T) * ret.tangent[i].w);
+
+		// get TBN matrix
+		glm::mat3 TBN =  glm::mat3(T, B, N);
+
+		// get quaternion from TBN matrix
+		glm::quat tbnq = glm::normalize(glm::quat_cast(TBN));
+
+		glm::vec4 q = glm::vec4(tbnq.x, tbnq.y, tbnq.z, tbnq.w);
+
+		// get maxmimum component of quaternion
+		float max = 0; std::uint32_t max_comp = 0;
+		bool is_negative = false;
+		for (std::uint32_t index = 0; index < 4; ++index)
+		{
+			if (abs(q[index]) > max)
+			{
+				max = abs(q[index]);
+				max_comp = index;
+				is_negative = q[index] < 0;
+			}
+		}
+		if (is_negative)
+		{   // make sure the maximum component is positive
+			// q and -q represent the same rotation
+			q = -q;
+		}
+		// encode quaternion
+		std::uint32_t res[3] = { 0, 0, 0};
+		std::uint32_t e = 0;
+		for (std::uint32_t index = 0; index < 4; ++index)
+		{
+			if (index != max_comp) {
+				const float sqrt_half_2 = 0.70710678118654752440084436210485f;
+				const float sqrt_2 = 1.4142135623730950488016887242097f;
+				// from [-sqrt(2)/2, sqrt(2)/2] to [0, 1023], with precision sqrt(2)/1023 = 0.0013824179495338
+				res[e ++] = (std::uint32_t)((q[index] + sqrt_half_2)/ sqrt_2 * 1023.f);
+			}
+		}
+		ret.tbnquad[i] = (max_comp << 30) | (res[0] << 20) | (res[1] << 10) | res[2];
 	}
 	// meta-data & return
 	ret.aabbMin = bmin;

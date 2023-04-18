@@ -40,7 +40,7 @@ namespace
 	 * indicate that this is a custom format by myself (=scsmbil) with
 	 * additional tangent space information.
 	 */
-	constexpr char kFileVariant[16] = "scsmbil-tan";
+	constexpr char kFileVariant[16] = "hz-tbnquad";
 
 	// types
 	struct TextureInfo_
@@ -316,6 +316,7 @@ namespace
 			checked_write_( aOut, sizeof(glm::vec3)*vertexCount, imesh.norm.data() );
 			checked_write_( aOut, sizeof(glm::vec2)*vertexCount, imesh.text.data() );
 			checked_write_( aOut, sizeof(glm::vec4)*vertexCount, imesh.tangent.data() );
+			checked_write_( aOut, sizeof(uint32_t)*vertexCount, imesh.tbnquad.data() );
 
 			checked_write_( aOut, sizeof(std::uint32_t)*indexCount, imesh.indices.data() );
 		}

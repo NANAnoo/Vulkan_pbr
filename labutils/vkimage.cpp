@@ -522,6 +522,86 @@ std::tuple<Image, Buffer> loadImageHelper(char const* aPattern,
 		return res;
 	}
 
+	std::tuple<Image, Buffer> load_dummy_texture( VulkanContext const& aContext, VkCommandBuffer cbuff, Allocator const&aAllocator, glm::vec4 const& aColor)
+	{
+		// Create a 1x1 image with the color
+		std::uint8_t const data[4] = {std::uint8_t(aColor.r * 255), std::uint8_t(aColor.g * 255), std::uint8_t(aColor.b * 255), std::uint8_t(aColor.a * 255)};
+
+		// Create a staging buffer
+		Buffer staging = create_buffer( aAllocator, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
+
+		// Copy data to staging buffer
+		void* mapped = nullptr;
+		if( auto const res = vmaMapMemory( aAllocator.allocator, staging.allocation, &mapped ); VK_SUCCESS != res ) {
+			throw Error( "Mapping staging buffer memory\n"
+				"vmaMapMemory() returned %s", to_string(res).c_str());
+		}
+		std::memcpy( mapped, data, 4 );
+		vmaUnmapMemory( aAllocator.allocator, staging.allocation );
+
+		// Create image
+		Image ret = create_image_texture2d( aAllocator, 1, 1, VK_FORMAT_R8G8B8A8_SRGB,
+		 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT );
+
+		image_barrier(cbuff, ret.image, 0,
+			VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED, 
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VkImageSubresourceRange{
+				VK_IMAGE_ASPECT_COLOR_BIT, 
+				0, 1,
+				0, 1
+			});
+
+		// Upload data from staging buffer to image
+		VkBufferImageCopy copy; 
+		copy.bufferOffset = 0;
+		copy.bufferRowLength = 0; 
+		copy.bufferImageHeight = 0;
+		copy.imageSubresource = VkImageSubresourceLayers{
+			VK_IMAGE_ASPECT_COLOR_BIT,
+			0,
+			0, 1
+		};
+		copy.imageOffset = VkOffset3D{ 0, 0, 0 };
+		copy.imageExtent = VkExtent3D{ 1, 1, 1 };
+		vkCmdCopyBufferToImage( cbuff, staging.buffer, ret.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy );
+
+		// Transition base level to TRANSFER SRC OPTIMAL
+		image_barrier( cbuff, ret.image, 
+			VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_ACCESS_TRANSFER_READ_BIT,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
+			VK_PIPELINE_STAGE_TRANSFER_BIT, 
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VkImageSubresourceRange{
+				VK_IMAGE_ASPECT_COLOR_BIT,
+				0, 1, 0, 1
+			}
+		);
+
+		// Whole image is currently in the TRANSFER SRC OPTIMAL layout. To use the
+		// image as a texture from which we sample, it must be in the
+		// SHADER READ ONLY OPTIMAL layout. 
+		image_barrier( cbuff, ret.image, 
+			VK_ACCESS_TRANSFER_READ_BIT,
+			VK_ACCESS_SHADER_READ_BIT,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+			VK_PIPELINE_STAGE_TRANSFER_BIT, 
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT|VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT,
+			VkImageSubresourceRange{
+				VK_IMAGE_ASPECT_COLOR_BIT,
+				0, 1, 0, 1
+			}
+		);
+
+		return std::make_tuple(std::move(ret), std::move(staging));
+	}
+
 	std::uint32_t compute_mip_level_count( std::uint32_t aWidth, std::uint32_t aHeight )
 	{
 		std::uint32_t const bits = aWidth | aHeight;

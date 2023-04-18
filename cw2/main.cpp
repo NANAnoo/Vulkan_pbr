@@ -69,6 +69,9 @@ namespace
 		constexpr char const* kPbrAMNMFragShaderPath = SHADERDIR_ "pbr_am_nm.frag.spv";
 		constexpr char const* kNormDebugGeomPath = SHADERDIR_ "normal.geom.spv";
 		constexpr char const* kNormDebugFragPath = SHADERDIR_ "normal.frag.spv";
+		constexpr char const* kTBNCompVertPath = SHADERDIR_ "tbncomp.vert.spv";
+		constexpr char const* kTBNCompFragPath = SHADERDIR_ "tbncomp.frag.spv";
+		constexpr char const* kTBNCompGeomPath = SHADERDIR_ "tbn_norm_debug.geom.spv";
 #		undef SHADERDIR_
 
 		constexpr char const* kModelPath = "assets/cw2/sponza-pbr.comp5822mesh";
@@ -90,6 +93,7 @@ namespace
 			PBR_base,
 			PBR_alpha_mask,
 			PBR_alpha_mask_normal_map,
+			PBR_TBN_COMPRESS,
 		};
 	}
 
@@ -174,7 +178,10 @@ int main() try
 	static float cursor_x = 0, cursor_y = 0, offset_x = 0, offset_y = 0;
 	static cfg::ShadingMode sCurrentMode = cfg::Basic;
 	static bool shouldGeneratePipeLine = true;
-	static bool showDebugNormal = false;
+	static bool modeChanged = true;
+	static bool shouldDebugNormal = false;
+	static bool showDebugNormalMap = false;
+	static bool showDebugTBN = false;
 	glfwSetKeyCallback( window.window, 
 	[]( GLFWwindow* aWindow, int aKey, int, int aAction, int){
 		if( GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction )
@@ -185,22 +192,30 @@ int main() try
 			sController.onKeyUp(aKey);
 			if (aKey == GLFW_KEY_1) {
 				// normal mode
-				shouldGeneratePipeLine = (sCurrentMode != cfg::Basic);
+				modeChanged = (sCurrentMode != cfg::Basic);
 				sCurrentMode = cfg::Basic;
 			} else if (aKey == GLFW_KEY_2) {
 				// pbr mode
-				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_base);
+				modeChanged = (sCurrentMode != cfg::PBR_base);
 				sCurrentMode = cfg::PBR_base;
 			} else if (aKey == GLFW_KEY_3) {
 				// pbr alpha mask mode
-				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_alpha_mask);
+				modeChanged = (sCurrentMode != cfg::PBR_alpha_mask);
 				sCurrentMode = cfg::PBR_alpha_mask;
 			} else if (aKey == GLFW_KEY_4) {
 				// pbr alpha mask normal map mode
-				shouldGeneratePipeLine = (sCurrentMode != cfg::PBR_alpha_mask_normal_map);
+				modeChanged = (sCurrentMode != cfg::PBR_alpha_mask_normal_map);
 				sCurrentMode = cfg::PBR_alpha_mask_normal_map;
+			} else if (aKey == GLFW_KEY_5) {
+				// pbr PBR_TBN_COMPRESS
+				modeChanged = (sCurrentMode != cfg::PBR_TBN_COMPRESS);
+				sCurrentMode = cfg::PBR_TBN_COMPRESS;
+			} else if (aKey == GLFW_KEY_M) {
+				showDebugNormalMap = !showDebugNormalMap;
 			} else if (aKey == GLFW_KEY_N) {
-				showDebugNormal = !showDebugNormal;
+				shouldDebugNormal = !shouldDebugNormal;
+			} else if (aKey == GLFW_KEY_B) {
+				showDebugTBN = !showDebugTBN;
 			}
 		} else if (aAction == GLFW_PRESS) {
 			sController.onKeyPress(aKey);
@@ -256,6 +271,9 @@ int main() try
 	lut::ShaderModule pbrAMNMFrag = lut::load_shader_module(window, cfg::kPbrAMNMFragShaderPath);
 	lut::ShaderModule normDebugGeom = lut::load_shader_module(window, cfg::kNormDebugGeomPath);
 	lut::ShaderModule normDebugFrag = lut::load_shader_module(window, cfg::kNormDebugFragPath);
+	lut::ShaderModule tbnCompVert = lut::load_shader_module(window, cfg::kTBNCompVertPath);
+	lut::ShaderModule tbnCompFrag = lut::load_shader_module(window, cfg::kTBNCompFragPath);
+	lut::ShaderModule tbnCompGeom = lut::load_shader_module(window, cfg::kTBNCompGeomPath);
 
 	// create scene ubo
 	VkUBO<glsl::SceneUniform> sceneUBO(window, allocator, dpool, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_GEOMETRY_BIT, 0);
@@ -286,16 +304,29 @@ int main() try
 	.enableDepthTest(true)
 	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
-	PipeLineGenerator normDebugPipeGen;
-	normDebugPipeGen
+	PipeLineGenerator normMapDebugPipeGen;
+	normMapDebugPipeGen
 	.addDescLayout(sceneUBO.layout.handle)
 	.enableBlend(false)
 	.setCullMode(VK_CULL_MODE_BACK_BIT)
 	.setPolyGonMode(VK_POLYGON_MODE_FILL)
 	.enableDepthTest(true)
-	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_POINT_LIST)
 	.bindVertShader(baseVert)
 	.bindGeomShader(normDebugGeom)
+	.bindFragShader(normDebugFrag)
+	.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+
+	PipeLineGenerator tbnCompPipeGen;
+	tbnCompPipeGen
+	.addDescLayout(sceneUBO.layout.handle)
+	.enableBlend(false)
+	.setCullMode(VK_CULL_MODE_BACK_BIT)
+	.setPolyGonMode(VK_POLYGON_MODE_FILL)
+	.enableDepthTest(true)
+	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_POINT_LIST)
+	.bindVertShader(tbnCompVert)
+	.bindGeomShader(tbnCompGeom)
 	.bindFragShader(normDebugFrag)
 	.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 
@@ -337,10 +368,14 @@ int main() try
 			}
 		);
 	}
-	normDebugPipeGen = model->bindPipeLine(normDebugPipeGen);
-	normDebugPipeGen.addDescLayout(model->debugLayout.handle);
-	auto normDebugPipe = normDebugPipeGen.generate(window, renderPass.handle);
+	normMapDebugPipeGen = model->bindPipeLine(normMapDebugPipeGen);
+	normMapDebugPipeGen.addDescLayout(model->debugLayout.handle);
+	auto normMapDebugPipe = normMapDebugPipeGen.generate(window, renderPass.handle);
 	
+	tbnCompPipeGen = model->bindTbnCompressedPipeLine(tbnCompPipeGen);
+	tbnCompPipeGen.addDescLayout(model->pbrFullLayout.handle);
+	auto tbnCompPipe = tbnCompPipeGen.generate(window, renderPass.handle);
+
 	// Application main loop
 	bool recreateSwapchain = false;
 	auto previous = std::chrono::system_clock::now();
@@ -374,7 +409,8 @@ int main() try
 			if( changes.changedSize ) {
 				std::tie(depthBuffer,depthBufferView) = create_depth_buffer( window, allocator );
 				basicPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
-				normDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				normMapDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				tbnCompPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 			}
 
 			framebuffers.clear();
@@ -388,13 +424,18 @@ int main() try
 		}
 		
 		// generate pipeline
-		if (shouldGeneratePipeLine) {
-			shouldGeneratePipeLine = false;
+		if (shouldGeneratePipeLine || modeChanged) {
 			basicPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
-			normDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+			
 			// check if there is a pipeline cache
 			// also lazy loading here
-			normDebugPipe = normDebugPipeGen.generate(window, renderPass.handle);
+			if (shouldGeneratePipeLine) {
+				normMapDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				tbnCompPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				normMapDebugPipe = normMapDebugPipeGen.generate(window, renderPass.handle);
+				tbnCompPipe = tbnCompPipeGen.generate(window, renderPass.handle);
+			}
+			
 			if (sCurrentMode == cfg::Basic) {
 				pipelineMap[cfg::Basic].emplace_back(
 					model->
@@ -466,7 +507,19 @@ int main() try
 					.addDescLayout(model->pbrFullLayout.handle)
 					.generate(window, renderPass.handle)
 				);
-			} 
+			} else if (sCurrentMode == cfg::PBR_TBN_COMPRESS) {
+				pipelineMap[cfg::PBR_TBN_COMPRESS].emplace_back(
+					model->
+					bindTbnCompressedPipeLine(basicPipeGen)
+					.bindVertShader(tbnCompVert)
+					.bindFragShader(tbnCompFrag)
+					.addDescLayout(model->pbrFullLayout.handle)
+					.generate(window, renderPass.handle)
+				);
+			}
+
+			shouldGeneratePipeLine = false;
+			modeChanged = false;
 		}
 
 		// acquire swapchain image.
@@ -603,12 +656,18 @@ int main() try
 					model->onDraw(RenderingModel::All, RenderingModel::Full, cmdBuffer, [&](VkDescriptorSet mat_set) {
 						BindingMatSet(pipe_normal_map_alpha_test, cmdBuffer, mat_set);
 					});
+				} else if (sCurrentMode == cfg::PBR_TBN_COMPRESS) {
+					auto &pipe = pipelineMap[cfg::PBR_TBN_COMPRESS][0];
+					BeginPipeline(cmdBuffer, pipe);
+					model->tbnCompressedDraw(cmdBuffer, [&](VkDescriptorSet mat_set) {
+						BindingMatSet(pipe, cmdBuffer, mat_set);
+					});
 				}
-				if (showDebugNormal) {
-					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, normDebugPipe.pipe.handle);
+				if (showDebugNormalMap) {
+					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, normMapDebugPipe.pipe.handle);
 					vkCmdBindDescriptorSets(cmdBuffer, 
 						VK_PIPELINE_BIND_POINT_GRAPHICS, 
-						normDebugPipe.layout.handle, 0,
+						normMapDebugPipe.layout.handle, 0,
 						1, 
 						&sceneUBO.set, 
 						0, nullptr
@@ -616,7 +675,7 @@ int main() try
 					model->onDraw(RenderingModel::NormalMapped, RenderingModel::NormalDebug, cmdBuffer, [&](VkDescriptorSet mat_set) {
 						vkCmdBindDescriptorSets(cmdBuffer, 
 							VK_PIPELINE_BIND_POINT_GRAPHICS, 
-							normDebugPipe.layout.handle, 1,
+							normMapDebugPipe.layout.handle, 1,
 							1, 
 							&mat_set, 
 							0, nullptr
@@ -625,7 +684,26 @@ int main() try
 					model->onDraw(RenderingModel::All, RenderingModel::NormalDebug, cmdBuffer, [&](VkDescriptorSet mat_set) {
 						vkCmdBindDescriptorSets(cmdBuffer, 
 							VK_PIPELINE_BIND_POINT_GRAPHICS, 
-							normDebugPipe.layout.handle, 1,
+							normMapDebugPipe.layout.handle, 1,
+							1, 
+							&mat_set, 
+							0, nullptr
+						);
+					});
+				}
+				if (showDebugTBN) {
+					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, tbnCompPipe.pipe.handle);
+					vkCmdBindDescriptorSets(cmdBuffer, 
+						VK_PIPELINE_BIND_POINT_GRAPHICS, 
+						tbnCompPipe.layout.handle, 0,
+						1, 
+						&sceneUBO.set, 
+						0, nullptr
+					);
+					model->tbnCompressedDraw(cmdBuffer, [&](const VkDescriptorSet& mat_set) {
+						vkCmdBindDescriptorSets(cmdBuffer, 
+							VK_PIPELINE_BIND_POINT_GRAPHICS, 
+							tbnCompPipe.layout.handle, 1,
 							1, 
 							&mat_set, 
 							0, nullptr

@@ -27,6 +27,8 @@ struct IndexedMesh
 
 	std::vector<glm::vec4> tangent; // Task 1.4
 
+	std::vector<std::uint32_t> tbnquad; // Task 1.5
+
 	std::vector<std::uint32_t> indices;
 
 	glm::vec3 aabbMin, aabbMax;

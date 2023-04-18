@@ -14,6 +14,8 @@
 #include "allocator.hpp"
 #include "vulkan/vulkan_core.h"
 #include "vulkan_context.hpp"
+#include "glm/vec4.hpp"
+#include "vkbuffer.hpp"
 
 namespace labutils
 {
@@ -43,6 +45,8 @@ namespace labutils
 							VkCommandPool const&,
                             Allocator const&, 
                             std::vector<std::string> const&);
+	
+	std::tuple<Image, Buffer>  load_dummy_texture( VulkanContext const&, VkCommandBuffer, Allocator const&, glm::vec4 const& aColor = glm::vec4( 1.0f ));
 
 	Image load_image_texture2d( char const* aPattern, VulkanContext const&, VkCommandPool, Allocator const& );
 
