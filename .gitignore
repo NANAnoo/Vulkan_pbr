@@ -18,5 +18,5 @@ compile_commands.json
 .cache/
 # Other stuff
 output.png
-
+report/
 #EOF

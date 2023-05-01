@@ -44,7 +44,9 @@ namespace labutils
 	std::unordered_map<std::string, Image> loadTextures(VulkanContext const&,
 							VkCommandPool const&,
                             Allocator const&, 
-                            std::vector<std::string> const&);
+                            std::vector<std::string> const&,
+							std::unordered_map<std::string, VkFormat> const&,
+							std::unordered_map<std::string, int> const&);
 	
 	std::tuple<Image, Buffer>  load_dummy_texture( VulkanContext const&, VkCommandBuffer, Allocator const&, glm::vec4 const& aColor = glm::vec4( 1.0f ));
 

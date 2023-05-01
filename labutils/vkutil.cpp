@@ -252,7 +252,7 @@ namespace labutils
 		bbarrier.srcQueueFamilyIndex = aSrcQueueFamilyIndex;
 		bbarrier.dstQueueFamilyIndex = aDstQueueFamilyIndex;
 
-		vkCmdPipelineBarrier(aCmdBuff, aSrcStageMask, aDstAccessMask,0, 
+		vkCmdPipelineBarrier(aCmdBuff, aSrcStageMask, aDstStageMask,0, 
 							0, nullptr, 
 							1, &bbarrier, 
 							0, nullptr);

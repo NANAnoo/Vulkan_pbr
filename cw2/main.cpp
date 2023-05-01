@@ -67,7 +67,8 @@ namespace
 		constexpr char const* kPbrAMFragShaderPath = SHADERDIR_ "pbr_alpha_mask.frag.spv";
 		constexpr char const* kPbrNMFragShaderPath = SHADERDIR_ "pbr_normalmap.frag.spv";
 		constexpr char const* kPbrAMNMFragShaderPath = SHADERDIR_ "pbr_am_nm.frag.spv";
-		constexpr char const* kNormDebugGeomPath = SHADERDIR_ "normal.geom.spv";
+		constexpr char const* kNormDebugGeomPath = SHADERDIR_ "normMap.geom.spv";
+		constexpr char const* kNormalDebugGeomPath = SHADERDIR_ "normal.geom.spv";
 		constexpr char const* kNormDebugFragPath = SHADERDIR_ "normal.frag.spv";
 		constexpr char const* kTBNCompVertPath = SHADERDIR_ "tbncomp.vert.spv";
 		constexpr char const* kTBNCompFragPath = SHADERDIR_ "tbncomp.frag.spv";
@@ -182,6 +183,9 @@ int main() try
 	static bool shouldDebugNormal = false;
 	static bool showDebugNormalMap = false;
 	static bool showDebugTBN = false;
+	static int sCurrentShadingType = 0;
+	const float kLightRotationSpeed = 1.0f; // angular speed
+	static bool sEnableLightmoving = false;
 	glfwSetKeyCallback( window.window, 
 	[]( GLFWwindow* aWindow, int aKey, int, int aAction, int){
 		if( GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction )
@@ -216,6 +220,18 @@ int main() try
 				shouldDebugNormal = !shouldDebugNormal;
 			} else if (aKey == GLFW_KEY_B) {
 				showDebugTBN = !showDebugTBN;
+			} else if (aKey == GLFW_KEY_Y) {
+				sCurrentShadingType = 0;
+			} else if (aKey == GLFW_KEY_U) {
+				sCurrentShadingType = 1;
+			} else if (aKey == GLFW_KEY_I) {
+				sCurrentShadingType = 2;
+			} else if (aKey == GLFW_KEY_O) {
+				sCurrentShadingType = 3;
+			} else if (aKey == GLFW_KEY_P) {
+				sCurrentShadingType = 4;
+			} else if (aKey == GLFW_KEY_SPACE) {
+				sEnableLightmoving = !sEnableLightmoving;
 			}
 		} else if (aAction == GLFW_PRESS) {
 			sController.onKeyPress(aKey);
@@ -270,6 +286,7 @@ int main() try
 	lut::ShaderModule pbrNMFrag = lut::load_shader_module(window, cfg::kPbrNMFragShaderPath);
 	lut::ShaderModule pbrAMNMFrag = lut::load_shader_module(window, cfg::kPbrAMNMFragShaderPath);
 	lut::ShaderModule normDebugGeom = lut::load_shader_module(window, cfg::kNormDebugGeomPath);
+	lut::ShaderModule normalDebugGeom = lut::load_shader_module(window, cfg::kNormalDebugGeomPath);
 	lut::ShaderModule normDebugFrag = lut::load_shader_module(window, cfg::kNormDebugFragPath);
 	lut::ShaderModule tbnCompVert = lut::load_shader_module(window, cfg::kTBNCompVertPath);
 	lut::ShaderModule tbnCompFrag = lut::load_shader_module(window, cfg::kTBNCompFragPath);
@@ -286,12 +303,11 @@ int main() try
 	lightUBO.data->color = glm::vec4(1, 1, 1, 1);
 
 	// create constant
-	struct FrameSize {
-		float width;
-		float height;
+	struct ShadingBit {
+		int shadingBit = 0;
 	};
 	// used in GEOMETRY shader
-	VkConstant<FrameSize> frameSizeConst(0, VK_SHADER_STAGE_GEOMETRY_BIT);
+	VkConstant<ShadingBit> cShadingBit(0, VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	// pipe generator, set up basic informations
 	PipeLineGenerator basicPipeGen;
@@ -302,8 +318,10 @@ int main() try
 	.setCullMode(VK_CULL_MODE_BACK_BIT)
 	.setPolyGonMode(VK_POLYGON_MODE_FILL)
 	.enableDepthTest(true)
+	.addConstantRange(cShadingBit.m_range)
 	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-
+	
+	// three generator for normalMap debug, normal debug and compressed normal debug
 	PipeLineGenerator normMapDebugPipeGen;
 	normMapDebugPipeGen
 	.addDescLayout(sceneUBO.layout.handle)
@@ -316,7 +334,22 @@ int main() try
 	.bindGeomShader(normDebugGeom)
 	.bindFragShader(normDebugFrag)
 	.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+	
+	//normal debug
+	PipeLineGenerator normalDebugPipeGen;
+	normalDebugPipeGen
+	.addDescLayout(sceneUBO.layout.handle)
+	.enableBlend(false)
+	.setCullMode(VK_CULL_MODE_BACK_BIT)
+	.setPolyGonMode(VK_POLYGON_MODE_FILL)
+	.enableDepthTest(true)
+	.setRenderMode(VK_PRIMITIVE_TOPOLOGY_POINT_LIST)
+	.bindVertShader(baseVert)
+	.bindGeomShader(normalDebugGeom)
+	.bindFragShader(normDebugFrag)
+	.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 
+	//compressed normal debug
 	PipeLineGenerator tbnCompPipeGen;
 	tbnCompPipeGen
 	.addDescLayout(sceneUBO.layout.handle)
@@ -368,9 +401,13 @@ int main() try
 			}
 		);
 	}
+	// generator corresponding normal debug pipelines
 	normMapDebugPipeGen = model->bindPipeLine(normMapDebugPipeGen);
 	normMapDebugPipeGen.addDescLayout(model->debugLayout.handle);
 	auto normMapDebugPipe = normMapDebugPipeGen.generate(window, renderPass.handle);
+
+	normalDebugPipeGen = model->bindPipeLine(normalDebugPipeGen);
+	auto normalDebugPipe = normalDebugPipeGen.generate(window, renderPass.handle);
 	
 	tbnCompPipeGen = model->bindTbnCompressedPipeLine(tbnCompPipeGen);
 	tbnCompPipeGen.addDescLayout(model->pbrFullLayout.handle);
@@ -387,6 +424,15 @@ int main() try
 		previous = now;
 		// update control info
 		sController.update(duration);
+		static float totalMovingTime = 0.f;
+		if (sEnableLightmoving) {
+			// make sure speed is constant
+			totalMovingTime += duration;
+			lightUBO.data->position = {2 *std::cos(kLightRotationSpeed * totalMovingTime), 2, -2 *std::sin(kLightRotationSpeed * totalMovingTime), 1};
+		} else {
+			totalMovingTime = 0;
+			lightUBO.data->position = {0, 2, 0, 1};
+		}
 		// update uniforms
 		update_scene_uniforms(
 			*sceneUBO.data.get(), 
@@ -411,6 +457,7 @@ int main() try
 				basicPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 				normMapDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 				tbnCompPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				normalDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 			}
 
 			framebuffers.clear();
@@ -432,8 +479,10 @@ int main() try
 			if (shouldGeneratePipeLine) {
 				normMapDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 				tbnCompPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
+				normalDebugPipeGen.setViewPort(float(window.swapchainExtent.width), float(window.swapchainExtent.height));
 				normMapDebugPipe = normMapDebugPipeGen.generate(window, renderPass.handle);
 				tbnCompPipe = tbnCompPipeGen.generate(window, renderPass.handle);
+				normalDebugPipe = normalDebugPipeGen.generate(window, renderPass.handle);
 			}
 			
 			if (sCurrentMode == cfg::Basic) {
@@ -558,6 +607,7 @@ int main() try
 		assert(std::size_t(imageIndex) < cbuffers.size());
 		assert(std::size_t(imageIndex) < framebuffers.size());
 
+		// helper function, bind uniforms, constants
 		auto BeginPipeline = [&](VkCommandBuffer cmdBuffer, const RenderPipeLine &pipe) {
 			vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.pipe.handle);
 			vkCmdBindDescriptorSets(cmdBuffer, 
@@ -574,8 +624,11 @@ int main() try
 				&lightUBO.set, 
 				0, nullptr
 			);
+			ShadingBit bit = {sCurrentShadingType};
+			cShadingBit.bind(cmdBuffer, pipe.layout.handle, &bit);
 		};
 
+		// helper function, bind descriptor set
 		auto BindingMatSet = [](const RenderPipeLine &pipe, VkCommandBuffer cmdBuffer, VkDescriptorSet mat_set) {
 			vkCmdBindDescriptorSets(cmdBuffer, 
 				VK_PIPELINE_BIND_POINT_GRAPHICS, 
@@ -690,6 +743,20 @@ int main() try
 							0, nullptr
 						);
 					});
+				}
+				if (shouldDebugNormal) {
+					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, normalDebugPipe.pipe.handle);
+					vkCmdBindDescriptorSets(cmdBuffer, 
+						VK_PIPELINE_BIND_POINT_GRAPHICS, 
+						normalDebugPipe.layout.handle, 0,
+						1, 
+						&sceneUBO.set, 
+						0, nullptr
+					);
+					model->onDraw(RenderingModel::Base, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::AlphaMasked, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::NormalMapped, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
+					model->onDraw(RenderingModel::All, RenderingModel::Normal, cmdBuffer, [&](VkDescriptorSet mat_set) {});
 				}
 				if (showDebugTBN) {
 					vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, tbnCompPipe.pipe.handle);

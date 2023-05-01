@@ -45,6 +45,10 @@ float GeometryDF(float NDotH, float NDotL, float VDotH, float NDotV, float rough
     return min(1.0, min(left, right));
 }
 
+layout(push_constant) uniform ShadingBit {
+    int shadingBit;
+} uShadingBit;
+
 void main()
 {   
     // get textures
@@ -79,6 +83,29 @@ void main()
     float NdotL = max(dot(N, L), 0.0);                
     vec3 radiance = uLight.color.rgb;
     vec3 color = (kD * albedo / PI + specular) * NdotL * radiance + albedo * 0.02;
+
+    switch(uShadingBit.shadingBit) {
+        case 1: {
+            // D
+            color = vec3(NDF); 
+            break; 
+        }
+        case 2: {
+            // G
+            color = vec3(G); 
+            break; 
+        }
+        case 3: {
+            // F
+            color = F; 
+            break; 
+        }
+        case 4: {
+            // specular
+            color = specular; 
+            break; 
+        }
+    };
 
     oColor = vec4(color, 1.0);
 }

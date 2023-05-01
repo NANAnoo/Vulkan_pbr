@@ -5,6 +5,7 @@
 #include "VkVertex.hpp"
 #include <functional>
 #include <memory>
+#include <unordered_set>
 
 namespace {
     struct RenderingMesh {
@@ -78,12 +79,14 @@ namespace {
         {
             texInfos = model.textures;
             materials = model.materials;
+            std::unordered_map<std::string, VkFormat> formats;
+            std::unordered_map<std::string, int> channels;
             for (size_t i = 0; i < model.meshes.size(); ++i) {
                 auto& mesh = model.meshes[i];
                 auto renderingMesh = RenderingMesh();
 
                 renderingMesh.materialId = mesh.materialId;
-
+                // load mesh vertex data
                 renderingMesh.positions = std::make_unique<VkVBO>(
                     aContext, aAllocator,
                     mesh.positions.size() * sizeof(glm::vec3),
@@ -123,7 +126,24 @@ namespace {
                 if (mat.normalMapTextureId != 0xffffffff) {
                     type = MaterialType(type | MaterialType::NormalMapped);
                 }
+                // arrange mesh by material id
                 meshes_by_material[type][mesh.materialId].push_back(std::move(renderingMesh));
+                
+                // set format and channel of each texture by path
+                formats[model.textures[mat.baseColorTextureId].path] = VK_FORMAT_R8G8B8A8_SRGB;
+                channels[model.textures[mat.baseColorTextureId].path] = 4;
+
+                formats[model.textures[mat.roughnessTextureId].path] = VK_FORMAT_R8_UNORM;
+                channels[model.textures[mat.roughnessTextureId].path] = 1;
+
+                formats[model.textures[mat.metalnessTextureId].path] = VK_FORMAT_R8_UNORM;
+                channels[model.textures[mat.metalnessTextureId].path] = 1;
+
+                if (mat.normalMapTextureId != 0xffffffff) {
+                    // VK_FORMAT_R8G8B8_UNORM not support on my laptop
+                    formats[model.textures[mat.normalMapTextureId].path] = VK_FORMAT_R8G8B8A8_UNORM;
+                    channels[model.textures[mat.normalMapTextureId].path] = 4;
+                } 
             }
 
             auto TexDescLayourHelper = [&](unsigned int tex_count) {
@@ -159,10 +179,10 @@ namespace {
                 paths.push_back(tex.path);
             }
             labutils::CommandPool tempPool = labutils::create_command_pool(aContext, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-            auto res = labutils::loadTextures(aContext, tempPool.handle, aAllocator, paths);
+            auto res = labutils::loadTextures(aContext, tempPool.handle, aAllocator, paths, formats, channels);
             // create img view for each img
             for (auto& [path, img] : res) {
-                auto texView = lut::create_image_view_texture2d(aContext, img.image, VK_FORMAT_R8G8B8A8_SRGB);
+                auto texView = lut::create_image_view_texture2d(aContext, img.image, formats[path]);
                 PackedTexture tex{
                     std::move(img),
                     std::move(texView)

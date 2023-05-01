@@ -88,12 +88,14 @@ namespace labutils
 std::tuple<Image, Buffer> loadImageHelper(char const* aPattern, 
 							VulkanContext const& aContext, 
 							VkCommandBuffer cbuff,
-							Allocator const& aAllocator) 
+							Allocator const& aAllocator,
+							VkFormat format,
+							int channel) 
 	{
 		stbi_set_flip_vertically_on_load(true);
 		// Load base image
 		int width, height, channels;
-		stbi_uc *data = stbi_load(aPattern, &width, &height, &channels, STBI_rgb_alpha);
+		stbi_uc *data = stbi_load(aPattern, &width, &height, &channels, channel);
 
 		if (!data) {
 			throw Error( "%s: unable to load texture base image (%s)", aPattern, 0, 
@@ -104,7 +106,7 @@ std::tuple<Image, Buffer> loadImageHelper(char const* aPattern,
 		auto const u_height= std::uint32_t(height);
 
 		// Create staging buffer and copy image data to it
-		auto const sizeInBytes = u_width * u_height * 4;
+		auto const sizeInBytes = u_width * u_height * channel;
 
 		auto staging = create_buffer(aAllocator, sizeInBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
@@ -121,7 +123,7 @@ std::tuple<Image, Buffer> loadImageHelper(char const* aPattern,
 		stbi_image_free( data );
 
 		// Create image
-		auto ret = create_image_texture2d( aAllocator, u_width, u_height, VK_FORMAT_R8G8B8A8_SRGB,
+		auto ret = create_image_texture2d( aAllocator, u_width, u_height, format,
 			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT );
 
 			// Transition whole image layout
@@ -463,7 +465,9 @@ std::tuple<Image, Buffer> loadImageHelper(char const* aPattern,
 	std::unordered_map<std::string, Image> loadTextures(VulkanContext const& aContext,
 							VkCommandPool const& aCmdPool,
                             Allocator const& aAllocator, 
-                            std::vector<std::string> const& paths)
+                            std::vector<std::string> const& paths,
+							std::unordered_map<std::string, VkFormat> const& formats,
+							std::unordered_map<std::string, int> const& channels)
 	{
 		// Create command buffer for data upload and begin recording
 		VkCommandBuffer cbuff = alloc_command_buffer( aContext, aCmdPool);
@@ -478,7 +482,7 @@ std::tuple<Image, Buffer> loadImageHelper(char const* aPattern,
 		std::unordered_map<std::string, std::tuple<Image, Buffer>> tmp;
 		for (auto &path : paths) {
 			// load & upload all textures in a cmd buffer
-			tmp.insert({path, loadImageHelper(path.c_str(), aContext, cbuff, aAllocator)});
+			tmp.insert({path, loadImageHelper(path.c_str(), aContext, cbuff, aAllocator, formats.at(path), channels.at(path))});
 		}
 		// End command recording
 		if( auto const res = vkEndCommandBuffer( cbuff ); VK_SUCCESS != res ) 
