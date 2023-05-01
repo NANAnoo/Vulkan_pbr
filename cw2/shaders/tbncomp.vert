@@ -16,7 +16,7 @@ layout( location = 0 ) out vec2 v2f_tc;
 layout( location = 1 ) out vec4 pos_world;
 layout( location = 2 ) out mat3 tbn;
 
-// const float sqrt2 = 1.4142135623730951;
+const float sqrt2 = 1.4142135623730951;
 const float sqrt2_half = 0.7071067811865475;
 
 mat3 quaternionToRotationMatrix(vec4 q) {
@@ -46,7 +46,7 @@ void main()
     // decode TBN matrix
     int max_component = int(round(tbnquat.a * 3.0));
     // transform to [-sart(2)/2, sqrt(2)/2] range
-    vec3 components = tbnquat.rgb * sqrt2_half;
+    vec3 components = tbnquat.rgb * sqrt2 - sqrt2_half;
     float max_component_value = sqrt(1.0f - dot(components, components));
     
     int idx = 0;
