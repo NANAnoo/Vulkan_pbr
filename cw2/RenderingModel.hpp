@@ -148,7 +148,7 @@ namespace {
 
             auto TexDescLayourHelper = [&](unsigned int tex_count) {
                 std::vector<VkDescriptorSetLayoutBinding> bindings(tex_count);
-                for (int i = 0; i < tex_count; i ++) {
+                for (unsigned int i = 0; i < tex_count; i ++) {
                     bindings[i].binding = i; // bind texture sampler 0
                     bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                     bindings[i].descriptorCount = 1; 
@@ -157,7 +157,7 @@ namespace {
                 
                 VkDescriptorSetLayoutCreateInfo layoutInfo{};
                 layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-                layoutInfo.bindingCount = bindings.size();
+                layoutInfo.bindingCount = uint32_t(bindings.size());
                 layoutInfo.pBindings = bindings.data();
 
                 VkDescriptorSetLayout layout = VK_NULL_HANDLE;

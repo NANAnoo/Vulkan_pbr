@@ -230,6 +230,8 @@ int main() try
 				sCurrentShadingType = 3;
 			} else if (aKey == GLFW_KEY_P) {
 				sCurrentShadingType = 4;
+			} else if (aKey == GLFW_KEY_LEFT_BRACKET) {
+				sCurrentShadingType = 5;
 			} else if (aKey == GLFW_KEY_SPACE) {
 				sEnableLightmoving = !sEnableLightmoving;
 			}

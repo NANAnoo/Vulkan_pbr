@@ -82,7 +82,8 @@ void main()
 
     float NdotL = max(dot(N, L), 0.0);                
     vec3 radiance = uLight.color.rgb;
-    vec3 color = (kD * albedo / PI + specular) * NdotL * radiance + albedo * 0.02;
+    vec3 diffuse = kD * albedo / PI;
+    vec3 color = (diffuse + specular) * NdotL * radiance + albedo * 0.02;
 
     switch(uShadingBit.shadingBit) {
         case 1: {
@@ -103,6 +104,11 @@ void main()
         case 4: {
             // specular
             color = specular; 
+            break; 
+        }
+        case 5: {
+            // diffuse
+            color = diffuse; 
             break; 
         }
     };

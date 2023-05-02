@@ -226,7 +226,7 @@ IndexedMesh make_indexed_mesh( TriangleSoup const& aSoup, float aErrorTolerance 
 				const float sqrt_half_2 = 0.70710678118654752440084436210485f;
 				const float sqrt_2 = 1.4142135623730950488016887242097f;
 				// from [-sqrt(2)/2, sqrt(2)/2] to [0, 1023], with precision sqrt(2)/1023 = 0.0013824179495338
-				res[e ++] = (std::uint32_t)((q[index] + sqrt_half_2)/ sqrt_2 * 1023.f);
+				res[e ++] = std::uint32_t(round((std::uint32_t)((q[index] + sqrt_half_2)/ sqrt_2 * 1023.f)));
 			}
 		}
 		ret.tbnquad[i] = (max_comp << 30) | (res[0] << 20) | (res[1] << 10) | res[2];
